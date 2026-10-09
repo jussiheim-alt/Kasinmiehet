@@ -43,7 +43,9 @@
     "@vitejs/plugin-react": "^4.4.1",
     "concurrently": "^10.0.6",
     "playwright": "^1.64.0",
+    "sharp": "^0.35.5",
     "typescript": "~5.8.3",
-    "vite": "^6.3.3"
+    "vite": "^6.3.3",
+    "vite-plugin-pwa": "^2.0.0"
   }
 }

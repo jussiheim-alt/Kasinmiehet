@@ -14,6 +14,15 @@ npm run dev
 
 Vite proxyttaa `/api` → backend. SQLite-tiedosto: `server/data/kasinmiehet.sqlite`.
 
+## Asenna Android-kotinäytölle (Chrome)
+
+Chrome tarjoaa “Asenna sovellus” / “Lisää kotinäytölle” vain kun:
+1. Sivusto on **HTTPS** (Render OK)
+2. On **web app manifest** + ikonit
+3. On **service worker**
+
+Nämä on nyt mukana (`vite-plugin-pwa`). Avaa Render-URL Chromessa → valikko ⋮ → **Asenna sovellus** / **Lisää kotinäytölle**.
+
 ## Render (tuotanto)
 
 Yksi Web Service palvelee UI:n + API:n (`render.yaml`).
