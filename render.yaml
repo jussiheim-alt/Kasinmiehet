@@ -1,0 +1,19 @@
+# Render Blueprint — Kasinmiehet (UI + API yhdessä palvelussa)
+# New → Blueprint → valitse tämä repo.
+services:
+  - type: web
+    name: kasinmiehet
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Ilman levyä SQLite elää ephemeraalilla filessysteemillä (häviää redeployssa).
+      # Pysyvyys: päivitä plan starteriksi ja lisää Persistent Disk mountPath=/var/data,
+      # sitten aseta DATA_DIR=/var/data.
+      - key: DATA_DIR
+        value: ./server/data
