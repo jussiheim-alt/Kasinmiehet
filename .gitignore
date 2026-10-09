@@ -13,3 +13,7 @@ android/*.iml
 android/.idea
 ios/App/Pods
 ios/App/build
+ios/DerivedData
+server/data
+*.sqlite
+*.sqlite-*

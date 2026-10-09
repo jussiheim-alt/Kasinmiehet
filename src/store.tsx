@@ -9,13 +9,14 @@ import {
   type ReactNode,
 } from 'react'
 import { DEMO_CATCHES, DEMO_DAYS, DEMO_WEATHER, SEED_SPECIES, USERS } from './data'
+import { apiGet, apiSend } from './lib/api'
 import {
   getCurrentPosition,
-  looksNearWater,
   startRouteTracking,
   stopRouteTracking,
 } from './lib/geo'
 import { shareText } from './lib/share'
+import { isNearWater } from './lib/water'
 import { fetchWeather } from './lib/weather'
 import type {
   AppState,
@@ -25,7 +26,7 @@ import type {
   WeatherSnapshot,
 } from './types'
 
-const STORAGE_KEY = 'kasinmiehet-v1'
+const STORAGE_KEY = 'kasinmiehet-v2'
 
 function emptyUndesired(): Record<UserId, string[]> {
   return { olli: [], matti: [], jussi: [] }
@@ -49,6 +50,14 @@ function loadState(): AppState {
   }
 }
 
+interface BootstrapPayload {
+  species: Species[]
+  catches: CatchRecord[]
+  fishingDays: AppState['fishingDays']
+  undesired: string[]
+  session: AppState['session'] & { id?: string }
+}
+
 interface StoreApi {
   state: AppState
   users: typeof USERS
@@ -56,6 +65,7 @@ interface StoreApi {
   weather: WeatherSnapshot
   trackingMode: 'native-background' | 'web' | 'none' | null
   lastFix: { lat: number; lng: number } | null
+  apiOnline: boolean | null
   login: (id: UserId) => void
   logout: () => void
   startSession: () => Promise<'native-background' | 'web' | 'none'>
@@ -89,16 +99,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     'native-background' | 'web' | 'none' | null
   >(null)
   const [lastFix, setLastFix] = useState<{ lat: number; lng: number } | null>(null)
+  const [apiOnline, setApiOnline] = useState<boolean | null>(null)
   const startingRef = useRef(false)
+  const sessionIdRef = useRef<string | null>(null)
+  const pointsSyncTimer = useRef<number | null>(null)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
   }, [state])
 
-  const species = useMemo(
-    () => [...SEED_SPECIES, ...state.customSpecies],
-    [state.customSpecies],
-  )
+  const species = useMemo(() => {
+    const customIds = new Set(state.customSpecies.map((s) => s.id))
+    const seed = SEED_SPECIES.filter((s) => !customIds.has(s.id))
+    return [...seed, ...state.customSpecies]
+  }, [state.customSpecies])
 
   const todayKey = new Date().toISOString().slice(0, 10)
   const promptsUsedKey = `water-prompts-${todayKey}`
@@ -111,18 +125,59 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(promptsUsedKey, String(promptsUsed))
   }, [promptsUsed, promptsUsedKey])
 
+  const syncBootstrap = useCallback(async (userId: UserId | null) => {
+    try {
+      const q = userId ? `?userId=${userId}` : ''
+      const data = await apiGet<BootstrapPayload>(`/api/bootstrap${q}`)
+      setApiOnline(true)
+      setState((s) => ({
+        ...s,
+        catches: data.catches.length ? data.catches : s.catches,
+        fishingDays: data.fishingDays.length ? data.fishingDays : s.fishingDays,
+        customSpecies: data.species.filter(
+          (sp) => !SEED_SPECIES.some((seed) => seed.id === sp.id),
+        ),
+        undesiredSpecies: userId
+          ? { ...s.undesiredSpecies, [userId]: data.undesired }
+          : s.undesiredSpecies,
+        session:
+          data.session?.active && userId
+            ? { ...data.session, id: data.session.id }
+            : s.session.active
+              ? s.session
+              : { active: false, startedAt: null, points: [] },
+      }))
+      if (data.session?.active && data.session.id) {
+        sessionIdRef.current = data.session.id
+      }
+    } catch {
+      setApiOnline(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void syncBootstrap(state.currentUserId)
+  }, [state.currentUserId, syncBootstrap])
+
   const appendPoint = useCallback((lat: number, lng: number, t: string) => {
     setLastFix({ lat, lng })
     setState((s) => {
       if (!s.session.active) return s
       const last = s.session.points[s.session.points.length - 1]
       if (last && Math.hypot(last.lat - lat, last.lng - lng) < 0.00005) return s
+      const points = [...s.session.points, { lat, lng, t }]
+      const sid = s.session.id || sessionIdRef.current
+      if (sid) {
+        if (pointsSyncTimer.current) window.clearTimeout(pointsSyncTimer.current)
+        pointsSyncTimer.current = window.setTimeout(() => {
+          void apiSend(`/api/sessions/${sid}/points`, 'POST', { points }).catch(
+            () => undefined,
+          )
+        }, 4000)
+      }
       return {
         ...s,
-        session: {
-          ...s.session,
-          points: [...s.session.points, { lat, lng, t }],
-        },
+        session: { ...s.session, points },
       }
     })
   }, [])
@@ -132,8 +187,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const lat = fix?.lat ?? 60.17
     const lng = fix?.lng ?? 24.94
     if (fix && 'lat' in fix) setLastFix({ lat: fix.lat, lng: fix.lng })
-    const w = await fetchWeather(lat, lng)
-    setWeather(w)
+    setWeather(await fetchWeather(lat, lng))
   }, [lastFix])
 
   useEffect(() => {
@@ -156,22 +210,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         lng: 25.032,
         t: new Date().toISOString(),
       }
+      const startedAt = new Date().toISOString()
+      const sessionId = `s-${Date.now()}`
+      sessionIdRef.current = sessionId
+      const points = [
+        {
+          lat: startPoint.lat,
+          lng: startPoint.lng,
+          t: startPoint.t ?? startedAt,
+        },
+      ]
       setLastFix({ lat: startPoint.lat, lng: startPoint.lng })
       setState((s) => ({
         ...s,
         session: {
+          id: sessionId,
           active: true,
-          startedAt: new Date().toISOString(),
-          points: [
-            {
-              lat: startPoint.lat,
-              lng: startPoint.lng,
-              t: startPoint.t ?? new Date().toISOString(),
-            },
-          ],
+          startedAt,
+          points,
         },
       }))
       void fetchWeather(startPoint.lat, startPoint.lng).then(setWeather)
+      void apiSend('/api/sessions/start', 'POST', {
+        id: sessionId,
+        userId: state.currentUserId,
+        startedAt,
+        points,
+      }).catch(() => setApiOnline(false))
 
       const result = await startRouteTracking((p) => {
         appendPoint(p.lat, p.lng, p.t)
@@ -182,16 +247,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } finally {
       startingRef.current = false
     }
-  }, [appendPoint])
+  }, [appendPoint, state.currentUserId])
 
   const stopSession = useCallback(async () => {
     await stopRouteTracking()
     setTrackingMode(null)
-    setState((s) => ({
-      ...s,
-      session: { active: false, startedAt: null, points: s.session.points },
-    }))
+    const sid = sessionIdRef.current
+    setState((s) => {
+      if (sid) {
+        void apiSend(`/api/sessions/${sid}/stop`, 'POST', {
+          endedAt: new Date().toISOString(),
+          points: s.session.points,
+        }).catch(() => undefined)
+      }
+      return {
+        ...s,
+        session: {
+          active: false,
+          startedAt: null,
+          points: s.session.points,
+          id: undefined,
+        },
+      }
+    })
+    sessionIdRef.current = null
   }, [])
+
+  const persistPreferences = useCallback(
+    (userId: UserId, undesired: string[]) => {
+      void apiSend(`/api/preferences/${userId}`, 'PUT', { undesired }).catch(
+        () => setApiOnline(false),
+      )
+    },
+    [],
+  )
 
   const api: StoreApi = {
     state,
@@ -200,6 +289,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     weather,
     trackingMode,
     lastFix,
+    apiOnline,
     login: (id) => setState((s) => ({ ...s, currentUserId: id })),
     logout: () => setState((s) => ({ ...s, currentUserId: null })),
     startSession: beginTracking,
@@ -207,10 +297,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     addCatch: async (input) => {
       if (!state.currentUserId) return
       const fix = lastFix ?? (await getCurrentPosition())
-      const w = await fetchWeather(
-        fix?.lat ?? 60.214,
-        fix?.lng ?? 25.032,
-      )
+      const w = await fetchWeather(fix?.lat ?? 60.214, fix?.lng ?? 25.032)
       setWeather(w)
       const record: CatchRecord = {
         id: `c-${Date.now()}`,
@@ -224,6 +311,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         weather: w,
       }
       setState((s) => ({ ...s, catches: [record, ...s.catches] }))
+      void apiSend('/api/catches', 'POST', record).catch(() => setApiOnline(false))
     },
     toggleUndesired: (speciesId) => {
       const uid = state.currentUserId
@@ -233,6 +321,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const next = list.includes(speciesId)
           ? list.filter((id) => id !== speciesId)
           : [...list, speciesId]
+        persistPreferences(uid, next)
         return {
           ...s,
           undesiredSpecies: { ...s.undesiredSpecies, [uid]: next },
@@ -242,31 +331,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     addSpecies: (name) => {
       const trimmed = name.trim()
       if (!trimmed) return
-      const id = trimmed
+      const id = `${trimmed
         .toLowerCase()
         .replace(/\s+/g, '-')
-        .replace(/[^a-zäöå0-9-]/gi, '')
+        .replace(/[^a-zäöå0-9-]/gi, '')}-${Date.now()}`
+      const created = { id, name: trimmed }
       setState((s) => ({
         ...s,
-        customSpecies: [
-          ...s.customSpecies,
-          { id: `${id}-${Date.now()}`, name: trimmed },
-        ],
+        customSpecies: [...s.customSpecies, created],
       }))
+      void apiSend('/api/species', 'POST', {
+        ...created,
+        createdBy: state.currentUserId,
+      }).catch(() => setApiOnline(false))
     },
     addFishingDay: (date, title) => {
+      const day = {
+        id: `d-${Date.now()}`,
+        date,
+        title: title || 'Kalastuspäivä',
+        participants: state.currentUserId ? [state.currentUserId] : [],
+      }
       setState((s) => ({
         ...s,
-        fishingDays: [
-          ...s.fishingDays,
-          {
-            id: `d-${Date.now()}`,
-            date,
-            title: title || 'Kalastuspäivä',
-            participants: s.currentUserId ? [s.currentUserId] : [],
-          },
-        ],
+        fishingDays: [...s.fishingDays, day],
       }))
+      void apiSend('/api/fishing-days', 'POST', day).catch(() =>
+        setApiOnline(false),
+      )
     },
     sendDeparture: async () => {
       const name =
@@ -300,9 +392,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     checkWaterPrompt: async () => {
       if (promptsUsed >= 2 || state.session.active) return false
       const fix = await getCurrentPosition()
-      if (!fix) return true // demo: still allow prompt without GPS
+      if (!fix) return false
       setLastFix({ lat: fix.lat, lng: fix.lng })
-      return looksNearWater(fix.lat, fix.lng)
+      const near = await isNearWater(fix.lat, fix.lng, 150)
+      // Only prompt when Overpass confirms water nearby
+      return near === true
     },
     waterPromptsLeft: Math.max(0, 2 - promptsUsed),
     isUndesired: (speciesId) => {

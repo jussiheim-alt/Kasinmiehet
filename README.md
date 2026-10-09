@@ -1,45 +1,39 @@
 # Kasinmiehet
 
-Yksityinen kalastussovellus Ollille, Matille ja Jussille.
+Yksityinen kalastussovellus Ollille, Matille ja Jussille — jaettu data, GPS-reitit, sää ja vesistötunnistus.
 
-## Web (kehitys)
+## Kehitys (web + API)
 
 ```bash
 npm install
 npm run dev
 ```
 
-Avaa http://localhost:5173
+- UI: http://localhost:5173  
+- API: http://localhost:8787 (`/api/health`)
 
-## Android (Capacitor)
+Vite proxyttaa `/api` → backend. SQLite-tiedosto: `server/data/kasinmiehet.sqlite`.
 
-```bash
-npm install
-npm run build
-npx cap sync android
-npx cap open android   # vaatii Android Studion
-```
-
-Tai laitteelle/emulaattoriin:
+## Android
 
 ```bash
-npx cap run android
+npm run sync:android
+npx cap open android
 ```
 
-Taustareitti käyttää `@capacitor-community/background-geolocation` (ilmoitus “Kalastus käynnissä”). Selaimessa reitti tallentuu foreground-GPS:llä.
+## iOS (vaatii macOS + Xcode)
 
-## Ominaisuudet (proto)
+```bash
+npm run sync:ios
+npx cap open ios
+```
 
-- Kirjautuminen: Olli / Matti / Jussi
-- Aloita kalastus → GPS-reitti (natiivi tausta / selain)
-- Saaliit + Open-Meteo-sää + jako (Share / Web Share)
-- Karttavihjeet, kalenteri, lajiasetukset
-- Vesistöehdotus max 2×/pv
+Taustareitti: `@capacitor-community/background-geolocation`. iOS:n Info.plist sisältää sijaintilupatekstit ja `location` background mode.
 
-## Scriptit
+## Ominaisuudet
 
-| Komento | Merkitys |
-|---|---|
-| `npm run dev` | Vite-dev |
-| `npm run build` | Tuotantobuild → `dist/` |
-| `npm run sync:android` | build + `cap sync android` |
+- Jaettu backend (saaliit, sessiot, kalenteri, lajipreferenssit)
+- OpenStreetMap/Overpass -vesistömaski (“Aloitetaanko kalastus?” max 2×/pv)
+- Open-Meteo-sää
+- Saaliiden / lähtöjen jako
+- Capacitor Android + iOS -kuoret

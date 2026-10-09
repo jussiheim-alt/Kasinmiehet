@@ -4,10 +4,14 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n api,web -c teal,cyan \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:web": "vite",
+    "dev:api": "node server/index.js",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "sync:android": "npm run build && npx cap sync android"
+    "sync:android": "npm run build && npx cap sync android",
+    "sync:ios": "npm run build && npx cap sync ios",
+    "sync:native": "npm run build && npx cap sync"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",
@@ -18,13 +22,20 @@
     "@capacitor/geolocation": "^8.2.3",
     "@capacitor/ios": "^8.5.3",
     "@capacitor/share": "^8.0.3",
+    "better-sqlite3": "^13.0.3",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^10.0.6",
     "playwright": "^1.64.0",
     "typescript": "~5.8.3",
     "vite": "^6.3.3"

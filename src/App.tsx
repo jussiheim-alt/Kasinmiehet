@@ -280,6 +280,11 @@ function Home({
           <h1 className="brand" style={{ fontSize: '2.1rem' }}>
             Kasin<span>miehet</span>
           </h1>
+          {store.apiOnline != null && (
+            <p className="muted" style={{ margin: '6px 0 0', fontSize: '0.78rem' }}>
+              {store.apiOnline ? 'Synkka: jaettu palvelin' : 'Synkka: paikallinen (offline)'}
+            </p>
+          )}
         </div>
         <button type="button" className="btn btn-ghost" style={{ minHeight: 42, padding: '0 14px' }} onClick={onDeparture}>
           Lähden

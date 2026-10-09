@@ -152,13 +152,3 @@ export async function stopRouteTracking(): Promise<void> {
     webWatchId = null
   }
 }
-
-/** Rough coastal/inland water heuristic for demo prompts (native later: water mask). */
-export function looksNearWater(lat: number, lng: number): boolean {
-  // Finland-ish bounding box + simple coastline bands / lake belt
-  const inFinland =
-    lat >= 59.5 && lat <= 70.1 && lng >= 19.0 && lng <= 31.6
-  if (!inFinland) return Math.random() > 0.4
-  // Prefer prompting near Gulf of Finland / archipelago latitudes
-  return lat < 61.5 || lat > 64.5 || Math.abs(lng - 25) < 3
-}

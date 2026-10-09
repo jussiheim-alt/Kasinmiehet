@@ -41,6 +41,7 @@ export interface WeatherSnapshot {
 }
 
 export interface FishingSession {
+  id?: string
   active: boolean
   startedAt: string | null
   points: { lat: number; lng: number; t: string }[]
