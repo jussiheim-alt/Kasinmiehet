@@ -280,6 +280,29 @@ img {
   letter-spacing: -0.03em;
 }
 
+.home-topbar {
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.home-topbar-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-brand {
+  font-size: clamp(1.55rem, 7vw, 2.1rem) !important;
+  line-height: 1.05;
+}
+
+.home-depart-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  min-height: 42px;
+  padding: 0 12px;
+  margin-top: 18px;
+}
+
 .weather-strip {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

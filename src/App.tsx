@@ -288,10 +288,10 @@ function Home({
 
   return (
     <section className="screen">
-      <div className="topbar">
-        <div>
+      <div className="topbar home-topbar">
+        <div className="home-topbar-main">
           <div className="eyebrow">Hei, {userName}</div>
-          <h1 className="brand" style={{ fontSize: '2.1rem' }}>
+          <h1 className="brand home-brand">
             Kasin<span>miehet</span>
           </h1>
           {store.apiOnline != null && (
@@ -300,7 +300,12 @@ function Home({
             </p>
           )}
         </div>
-        <button type="button" className="btn btn-ghost" style={{ minHeight: 42, padding: '0 14px' }} onClick={onDeparture}>
+        <button
+          type="button"
+          className="btn btn-ghost home-depart-btn"
+          onClick={onDeparture}
+          title="Lähetä lähtöilmoitus ryhmälle"
+        >
           Lähden
         </button>
       </div>
