@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { DEMO_WEATHER, SEED_SPECIES, USERS } from './data'
-import { apiGet, apiSend } from './lib/api'
+import { apiGet, apiSend, apiSendJson } from './lib/api'
 import {
   getCurrentPosition,
   startRouteTracking,
@@ -21,12 +21,14 @@ import { fetchWeather } from './lib/weather'
 import type {
   AppState,
   CatchRecord,
+  FishingSession,
   Species,
   UserId,
   WeatherSnapshot,
 } from './types'
 
-const STORAGE_KEY = 'kasinmiehet-v4'
+const STORAGE_KEY = 'kasinmiehet-v5'
+const SYNC_POLL_MS = 2500
 
 function emptyUndesired(): Record<UserId, string[]> {
   return { olli: [], matti: [], jussi: [] }
@@ -61,12 +63,14 @@ function loadState(): AppState {
   return emptyState()
 }
 
-interface BootstrapPayload {
+interface SyncPayload {
+  revision: number
+  unchanged?: boolean
   species: Species[]
   catches: CatchRecord[]
   fishingDays: AppState['fishingDays']
   undesired: string[]
-  session: AppState['session'] & { id?: string }
+  session: FishingSession
 }
 
 interface StoreApi {
@@ -77,6 +81,8 @@ interface StoreApi {
   trackingMode: 'native-background' | 'web' | 'none' | null
   lastFix: { lat: number; lng: number } | null
   apiOnline: boolean | null
+  syncNotice: string | null
+  clearSyncNotice: () => void
   login: (id: UserId) => void
   logout: () => void
   startSession: () => Promise<'native-background' | 'web' | 'none'>
@@ -103,6 +109,43 @@ interface StoreApi {
 
 const StoreContext = createContext<StoreApi | null>(null)
 
+function applySharedPayload(
+  s: AppState,
+  data: SyncPayload,
+  userId: UserId | null,
+): AppState {
+  return {
+    ...s,
+    catches: data.catches,
+    fishingDays: data.fishingDays,
+    customSpecies: data.species.filter(
+      (sp) => !SEED_SPECIES.some((seed) => seed.id === sp.id),
+    ),
+    undesiredSpecies: userId
+      ? { ...s.undesiredSpecies, [userId]: data.undesired }
+      : s.undesiredSpecies,
+    session: data.session?.active
+      ? {
+          id: data.session.id ?? undefined,
+          active: true,
+          startedAt: data.session.startedAt,
+          points: data.session.points ?? [],
+          startedBy: data.session.startedBy ?? null,
+          participants: data.session.participants ?? [],
+        }
+      : {
+          active: false,
+          startedAt: null,
+          points: data.session?.points?.length
+            ? data.session.points
+            : s.session.points,
+          startedBy: null,
+          participants: [],
+          id: undefined,
+        },
+  }
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(loadState)
   const [weather, setWeather] = useState<WeatherSnapshot>(DEMO_WEATHER)
@@ -111,9 +154,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   >(null)
   const [lastFix, setLastFix] = useState<{ lat: number; lng: number } | null>(null)
   const [apiOnline, setApiOnline] = useState<boolean | null>(null)
+  const [syncNotice, setSyncNotice] = useState<string | null>(null)
   const startingRef = useRef(false)
   const sessionIdRef = useRef<string | null>(null)
   const pointsSyncTimer = useRef<number | null>(null)
+  const revisionRef = useRef(0)
+  const trackingModeRef = useRef(trackingMode)
+  const userIdRef = useRef(state.currentUserId)
+  const applyingRemoteRef = useRef(false)
+  const wasActiveRef = useRef(false)
+
+  useEffect(() => {
+    trackingModeRef.current = trackingMode
+  }, [trackingMode])
+
+  useEffect(() => {
+    userIdRef.current = state.currentUserId
+  }, [state.currentUserId])
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
@@ -136,52 +193,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(promptsUsedKey, String(promptsUsed))
   }, [promptsUsed, promptsUsedKey])
 
-  const syncBootstrap = useCallback(async (userId: UserId | null) => {
-    try {
-      const q = userId ? `?userId=${userId}` : ''
-      const data = await apiGet<BootstrapPayload>(`/api/bootstrap${q}`)
-      setApiOnline(true)
-      setState((s) => ({
-        ...s,
-        catches: data.catches,
-        fishingDays: data.fishingDays,
-        customSpecies: data.species.filter(
-          (sp) => !SEED_SPECIES.some((seed) => seed.id === sp.id),
-        ),
-        undesiredSpecies: userId
-          ? { ...s.undesiredSpecies, [userId]: data.undesired }
-          : s.undesiredSpecies,
-        session:
-          data.session?.active && userId
-            ? { ...data.session, id: data.session.id }
-            : { active: false, startedAt: null, points: [] },
-      }))
-      if (data.session?.active && data.session.id) {
-        sessionIdRef.current = data.session.id
-      }
-    } catch {
-      setApiOnline(false)
-    }
+  const ensureLocalTracking = useCallback(async () => {
+    if (trackingModeRef.current) return trackingModeRef.current
+    const result = await startRouteTracking((p) => {
+      appendPointRef.current?.(p.lat, p.lng, p.t)
+    })
+    const mode = result.mode === 'none' ? 'none' : result.mode
+    setTrackingMode(mode)
+    return mode
   }, [])
 
-  useEffect(() => {
-    void syncBootstrap(state.currentUserId)
-  }, [state.currentUserId, syncBootstrap])
+  const appendPointRef = useRef<
+    ((lat: number, lng: number, t: string) => void) | null
+  >(null)
 
   const appendPoint = useCallback((lat: number, lng: number, t: string) => {
     setLastFix({ lat, lng })
+    const uid = userIdRef.current
     setState((s) => {
       if (!s.session.active) return s
       const last = s.session.points[s.session.points.length - 1]
       if (last && Math.hypot(last.lat - lat, last.lng - lng) < 0.00005) return s
-      const points = [...s.session.points, { lat, lng, t }]
+      const points = [
+        ...s.session.points,
+        { lat, lng, t, userId: uid ?? undefined },
+      ]
       const sid = s.session.id || sessionIdRef.current
       if (sid) {
         if (pointsSyncTimer.current) window.clearTimeout(pointsSyncTimer.current)
         pointsSyncTimer.current = window.setTimeout(() => {
-          void apiSend(`/api/sessions/${sid}/points`, 'POST', { points }).catch(
-            () => undefined,
-          )
+          void apiSend(`/api/sessions/${sid}/points`, 'POST', {
+            points,
+            userId: uid,
+          }).catch(() => undefined)
         }, 4000)
       }
       return {
@@ -190,6 +234,124 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     })
   }, [])
+
+  appendPointRef.current = appendPoint
+
+  const applyRemoteSessionSideEffects = useCallback(
+    async (next: FishingSession, prevActive: boolean) => {
+      if (applyingRemoteRef.current) return
+      applyingRemoteRef.current = true
+      try {
+        if (next.active) {
+          if (next.id) sessionIdRef.current = next.id
+          const me = userIdRef.current
+          if (!prevActive) {
+            const starter = USERS.find((u) => u.id === next.startedBy)?.name
+            if (next.startedBy && next.startedBy !== me && starter) {
+              setSyncNotice(`${starter} aloitti kalastuksen — liityit mukaan`)
+            }
+            // Liity ryhmäsessioon palvelimella, jotta osallistujalistalla näyt
+            if (me && next.startedBy !== me) {
+              try {
+                const body = await apiSendJson<{
+                  session?: FishingSession
+                  revision?: number
+                }>('/api/sessions/start', 'POST', {
+                  id: `s-${me}-${Date.now()}`,
+                  userId: me,
+                  startedAt: next.startedAt || new Date().toISOString(),
+                  points: [],
+                })
+                if (body.revision) revisionRef.current = body.revision
+                if (body.session?.id) sessionIdRef.current = body.session.id
+              } catch {
+                /* ignore join failure */
+              }
+            }
+          }
+          await ensureLocalTracking()
+        } else if (prevActive) {
+          await stopRouteTracking()
+          setTrackingMode(null)
+          sessionIdRef.current = null
+          setSyncNotice('Kalastus päättyi (ryhmä)')
+        }
+      } finally {
+        applyingRemoteRef.current = false
+      }
+    },
+    [ensureLocalTracking],
+  )
+
+  const pullSync = useCallback(
+    async (userId: UserId | null, force = false) => {
+      if (!userId) return
+      try {
+        const since = force ? 0 : revisionRef.current
+        const data = await apiGet<SyncPayload>(
+          `/api/sync?userId=${encodeURIComponent(userId)}&since=${since}`,
+        )
+        setApiOnline(true)
+        if (data.unchanged) return
+
+        revisionRef.current = data.revision || revisionRef.current
+        const prevActive = wasActiveRef.current
+        setState((s) => applySharedPayload(s, data, userId))
+        wasActiveRef.current = Boolean(data.session?.active)
+        if (data.session?.id) sessionIdRef.current = data.session.id
+        else if (!data.session?.active) sessionIdRef.current = null
+
+        await applyRemoteSessionSideEffects(
+          data.session ?? { active: false, startedAt: null, points: [] },
+          prevActive,
+        )
+      } catch {
+        setApiOnline(false)
+      }
+    },
+    [applyRemoteSessionSideEffects],
+  )
+
+  useEffect(() => {
+    void pullSync(state.currentUserId, true)
+  }, [state.currentUserId, pullSync])
+
+  // Pollaus + SSE — kaikki laitteet pysyvät synkissä
+  useEffect(() => {
+    const userId = state.currentUserId
+    if (!userId) return
+
+    const poll = window.setInterval(() => {
+      void pullSync(userId)
+    }, SYNC_POLL_MS)
+
+    let es: EventSource | null = null
+    try {
+      es = new EventSource('/api/events')
+      es.addEventListener('revision', () => {
+        void pullSync(userId)
+      })
+      es.onerror = () => {
+        /* pollaus hoitaa fallbackin */
+      }
+    } catch {
+      /* EventSource ei saatavilla */
+    }
+
+    const onFocus = () => void pullSync(userId)
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void pullSync(userId)
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVis)
+
+    return () => {
+      window.clearInterval(poll)
+      es?.close()
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVis)
+    }
+  }, [state.currentUserId, pullSync])
 
   const refreshWeather = useCallback(async () => {
     const fix = lastFix ?? (await getCurrentPosition())
@@ -222,11 +384,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const startedAt = new Date().toISOString()
       const sessionId = `s-${Date.now()}`
       sessionIdRef.current = sessionId
+      const uid = state.currentUserId
       const points = [
         {
           lat: startPoint.lat,
           lng: startPoint.lng,
           t: startPoint.t ?? startedAt,
+          userId: uid ?? undefined,
         },
       ]
       setLastFix({ lat: startPoint.lat, lng: startPoint.lng })
@@ -237,15 +401,44 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           active: true,
           startedAt,
           points,
+          startedBy: uid,
+          participants: uid ? [uid] : [],
         },
       }))
+      wasActiveRef.current = true
       void fetchWeather(startPoint.lat, startPoint.lng).then(setWeather)
-      void apiSend('/api/sessions/start', 'POST', {
-        id: sessionId,
-        userId: state.currentUserId,
-        startedAt,
-        points,
-      }).catch(() => setApiOnline(false))
+
+      try {
+        const body = await apiSendJson<{
+          session?: FishingSession
+          revision?: number
+        }>('/api/sessions/start', 'POST', {
+          id: sessionId,
+          userId: uid,
+          startedAt,
+          points,
+        })
+        if (body.revision) revisionRef.current = body.revision
+        if (body.session?.active) {
+          if (body.session.id) sessionIdRef.current = body.session.id
+          setState((s) => ({
+            ...s,
+            session: {
+              id: body.session!.id ?? sessionId,
+              active: true,
+              startedAt: body.session!.startedAt ?? startedAt,
+              points: body.session!.points?.length
+                ? body.session!.points
+                : points,
+              startedBy: body.session!.startedBy ?? uid,
+              participants: body.session!.participants ?? (uid ? [uid] : []),
+            },
+          }))
+        }
+        setApiOnline(true)
+      } catch {
+        setApiOnline(false)
+      }
 
       const result = await startRouteTracking((p) => {
         appendPoint(p.lat, p.lng, p.t)
@@ -267,8 +460,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         void apiSend(`/api/sessions/${sid}/stop`, 'POST', {
           endedAt: new Date().toISOString(),
           points: s.session.points,
-        }).catch(() => undefined)
+        })
+          .then(() => {
+            revisionRef.current += 1
+            void pullSync(userIdRef.current, true)
+          })
+          .catch(() => undefined)
       }
+      wasActiveRef.current = false
       return {
         ...s,
         session: {
@@ -276,17 +475,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           startedAt: null,
           points: s.session.points,
           id: undefined,
+          startedBy: null,
+          participants: [],
         },
       }
     })
     sessionIdRef.current = null
-  }, [])
+  }, [pullSync])
 
   const persistPreferences = useCallback(
     (userId: UserId, undesired: string[]) => {
-      void apiSend(`/api/preferences/${userId}`, 'PUT', { undesired }).catch(
-        () => setApiOnline(false),
-      )
+      void apiSend(`/api/preferences/${userId}`, 'PUT', { undesired })
+        .then(() => {
+          revisionRef.current += 1
+        })
+        .catch(() => setApiOnline(false))
     },
     [],
   )
@@ -299,8 +502,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     trackingMode,
     lastFix,
     apiOnline,
+    syncNotice,
+    clearSyncNotice: () => setSyncNotice(null),
     login: (id) => setState((s) => ({ ...s, currentUserId: id })),
-    logout: () => setState(emptyState()),
+    logout: () => {
+      void stopRouteTracking()
+      setTrackingMode(null)
+      sessionIdRef.current = null
+      wasActiveRef.current = false
+      setState(emptyState())
+    },
     startSession: beginTracking,
     stopSession,
     addCatch: async (input) => {
@@ -320,7 +531,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         weather: w,
       }
       setState((s) => ({ ...s, catches: [record, ...s.catches] }))
-      void apiSend('/api/catches', 'POST', record).catch(() => setApiOnline(false))
+      void apiSend('/api/catches', 'POST', record)
+        .then(() => {
+          revisionRef.current += 1
+          void pullSync(state.currentUserId, true)
+        })
+        .catch(() => setApiOnline(false))
     },
     toggleUndesired: (speciesId) => {
       const uid = state.currentUserId
@@ -352,7 +568,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void apiSend('/api/species', 'POST', {
         ...created,
         createdBy: state.currentUserId,
-      }).catch(() => setApiOnline(false))
+      })
+        .then(() => {
+          revisionRef.current += 1
+          void pullSync(state.currentUserId, true)
+        })
+        .catch(() => setApiOnline(false))
     },
     addFishingDay: (date, title) => {
       const day = {
@@ -365,9 +586,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         ...s,
         fishingDays: [...s.fishingDays, day],
       }))
-      void apiSend('/api/fishing-days', 'POST', day).catch(() =>
-        setApiOnline(false),
-      )
+      void apiSend('/api/fishing-days', 'POST', day)
+        .then(() => {
+          revisionRef.current += 1
+          void pullSync(state.currentUserId, true)
+        })
+        .catch(() => setApiOnline(false))
     },
     sendDeparture: async () => {
       const name =
@@ -404,7 +628,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!fix) return false
       setLastFix({ lat: fix.lat, lng: fix.lng })
       const near = await isNearWater(fix.lat, fix.lng, 150)
-      // Only prompt when Overpass confirms water nearby
       return near === true
     },
     waterPromptsLeft: Math.max(0, 2 - promptsUsed),

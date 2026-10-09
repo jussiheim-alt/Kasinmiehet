@@ -87,6 +87,12 @@ export default function App() {
     return () => window.clearTimeout(t)
   }, [toast])
 
+  useEffect(() => {
+    if (!store.syncNotice) return
+    setToast(store.syncNotice)
+    store.clearSyncNotice()
+  }, [store.syncNotice, store])
+
   const speciesName = (id: string) =>
     store.species.find((s) => s.id === id)?.name ?? id
 
@@ -344,6 +350,12 @@ function Home({
                   : store.trackingMode === 'web'
                     ? ' · GPS'
                     : ''}
+                {store.state.session.participants &&
+                store.state.session.participants.length > 0
+                  ? ` · ${store.state.session.participants
+                      .map((id) => USERS.find((u) => u.id === id)?.name ?? id)
+                      .join(', ')}`
+                  : ''}
                 {store.lastFix
                   ? ` · ${store.lastFix.lat.toFixed(3)}, ${store.lastFix.lng.toFixed(3)}`
                   : ''}

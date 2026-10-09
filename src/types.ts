@@ -44,11 +44,20 @@ export interface WeatherSnapshot {
   waterTempObservedAt?: string
 }
 
+export interface RoutePoint {
+  lat: number
+  lng: number
+  t: string
+  userId?: UserId | string
+}
+
 export interface FishingSession {
-  id?: string
+  id?: string | null
   active: boolean
   startedAt: string | null
-  points: { lat: number; lng: number; t: string }[]
+  points: RoutePoint[]
+  startedBy?: UserId | string | null
+  participants?: (UserId | string)[]
 }
 
 export interface FishingDay {

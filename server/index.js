@@ -5,6 +5,14 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import db from './db.js'
 import { fetchFishingCalendar } from './kalakalenteri.js'
+import {
+  addSseClient,
+  buildSyncPayload,
+  bumpRevision,
+  getActiveGroupSession,
+  getRevision,
+  mergePoints,
+} from './sync.js'
 import { fetchNearestWaterTemp } from './waterTemp.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -16,65 +24,43 @@ app.use(cors())
 app.use(express.json({ limit: '2mb' }))
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'kasinmiehet' })
+  res.json({ ok: true, service: 'kasinmiehet', revision: getRevision() })
 })
 
+/** Jaettu tila kaikille käyttäjille (bootstrap + live-synk). */
 app.get('/api/bootstrap', (req, res) => {
   const userId = String(req.query.userId || '')
-  const species = db.prepare('SELECT id, name, created_by AS createdBy FROM species ORDER BY name').all()
-  const catches = db
-    .prepare(
-      `SELECT id, user_id AS userId, species_id AS speciesId, lat, lng, created_at AS createdAt,
-              length_cm AS lengthCm, note, weather_json AS weatherJson
-       FROM catches ORDER BY created_at DESC LIMIT 200`,
-    )
-    .all()
-    .map((c) => ({
-      ...c,
-      weather: JSON.parse(c.weatherJson),
-      weatherJson: undefined,
-    }))
-  const fishingDays = db
-    .prepare(
-      `SELECT id, date, title, participants_json AS participantsJson FROM fishing_days ORDER BY date`,
-    )
-    .all()
-    .map((d) => ({
-      id: d.id,
-      date: d.date,
-      title: d.title,
-      participants: JSON.parse(d.participantsJson),
-    }))
-  const undesired = userId
-    ? db
-        .prepare(
-          'SELECT species_id AS speciesId FROM preferences WHERE user_id = ? AND undesired = 1',
-        )
-        .all(userId)
-        .map((r) => r.speciesId)
-    : []
-  const activeSession = userId
-    ? db
-        .prepare(
-          `SELECT id, user_id AS userId, started_at AS startedAt, ended_at AS endedAt, points_json AS pointsJson
-           FROM sessions WHERE user_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`,
-        )
-        .get(userId)
-    : null
+  res.json(buildSyncPayload(userId))
+})
 
-  res.json({
-    species,
-    catches,
-    fishingDays,
-    undesired,
-    session: activeSession
-      ? {
-          active: true,
-          startedAt: activeSession.startedAt,
-          points: JSON.parse(activeSession.pointsJson || '[]'),
-          id: activeSession.id,
-        }
-      : { active: false, startedAt: null, points: [] },
+app.get('/api/sync', (req, res) => {
+  const userId = String(req.query.userId || '')
+  const since = Number(req.query.since || 0)
+  const revision = getRevision()
+  if (Number.isFinite(since) && since > 0 && since >= revision) {
+    return res.json({ revision, unchanged: true })
+  }
+  res.json({ unchanged: false, ...buildSyncPayload(userId) })
+})
+
+/** Live-ilmoitukset revision-muutoksista (SSE). */
+app.get('/api/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache, no-transform')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders?.()
+  const remove = addSseClient(res)
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(`: ping\n\n`)
+    } catch {
+      clearInterval(heartbeat)
+      remove()
+    }
+  }, 25000)
+  req.on('close', () => {
+    clearInterval(heartbeat)
+    remove()
   })
 })
 
@@ -84,7 +70,8 @@ app.post('/api/species', (req, res) => {
   db.prepare(
     'INSERT OR IGNORE INTO species (id, name, created_by) VALUES (?, ?, ?)',
   ).run(id, name, createdBy ?? null)
-  res.json({ ok: true })
+  const revision = bumpRevision()
+  res.json({ ok: true, revision })
 })
 
 app.put('/api/preferences/:userId', (req, res) => {
@@ -99,7 +86,8 @@ app.put('/api/preferences/:userId', (req, res) => {
     for (const speciesId of undesired) ins.run(userId, speciesId)
   })
   tx()
-  res.json({ ok: true })
+  const revision = bumpRevision()
+  res.json({ ok: true, revision })
 })
 
 app.post('/api/catches', (req, res) => {
@@ -122,47 +110,100 @@ app.post('/api/catches', (req, res) => {
     c.note ?? null,
     JSON.stringify(c.weather ?? {}),
   )
-  res.json({ ok: true })
+  const revision = bumpRevision()
+  res.json({ ok: true, revision })
 })
 
 app.post('/api/sessions/start', (req, res) => {
   const { id, userId, startedAt, points } = req.body || {}
-  if (!id || !userId || !startedAt) {
+  if (!userId || !startedAt) {
     return res.status(400).json({ error: 'missing fields' })
   }
-  db.prepare(
-    `UPDATE sessions SET ended_at = ? WHERE user_id = ? AND ended_at IS NULL`,
-  ).run(startedAt, userId)
+
+  const existing = getActiveGroupSession()
+  if (existing.active && existing.id) {
+    // Liity olemassa olevaan ryhmäsessioon
+    const tagged = (points ?? []).map((p) => ({ ...p, userId }))
+    const merged = mergePoints(existing.points, tagged)
+    db.prepare('UPDATE sessions SET points_json = ? WHERE id = ?').run(
+      JSON.stringify(merged),
+      existing.id,
+    )
+    // Merkitse myös tämä käyttäjä osallistujaksi omalla rivillä (jos ei jo auki)
+    const mine = db
+      .prepare(
+        `SELECT id FROM sessions WHERE user_id = ? AND ended_at IS NULL LIMIT 1`,
+      )
+      .get(userId)
+    if (!mine) {
+      db.prepare(
+        `INSERT INTO sessions (id, user_id, started_at, ended_at, points_json)
+         VALUES (?, ?, ?, NULL, ?)`,
+      ).run(
+        id || `s-${userId}-${Date.now()}`,
+        userId,
+        existing.startedAt || startedAt,
+        JSON.stringify(tagged),
+      )
+    }
+    const revision = bumpRevision()
+    return res.json({
+      ok: true,
+      joined: true,
+      session: getActiveGroupSession(),
+      revision,
+    })
+  }
+
+  const sessionId = id || `s-${Date.now()}`
+  const tagged = (points ?? []).map((p) => ({ ...p, userId }))
   db.prepare(
     `INSERT INTO sessions (id, user_id, started_at, ended_at, points_json)
      VALUES (?, ?, ?, NULL, ?)`,
-  ).run(id, userId, startedAt, JSON.stringify(points ?? []))
-  res.json({ ok: true })
+  ).run(sessionId, userId, startedAt, JSON.stringify(tagged))
+  const revision = bumpRevision()
+  res.json({
+    ok: true,
+    joined: false,
+    session: getActiveGroupSession(),
+    revision,
+  })
 })
 
 app.post('/api/sessions/:id/points', (req, res) => {
   const points = Array.isArray(req.body?.points) ? req.body.points : []
-  db.prepare('UPDATE sessions SET points_json = ? WHERE id = ?').run(
-    JSON.stringify(points),
-    req.params.id,
-  )
-  res.json({ ok: true })
+  const userId = req.body?.userId
+  const group = getActiveGroupSession()
+  if (!group.active || !group.id) {
+    return res.status(404).json({ error: 'no active session' })
+  }
+
+  const tagged = points.map((p) => ({
+    ...p,
+    userId: p.userId || userId || undefined,
+  }))
+  const merged = mergePoints(group.points, tagged)
+  db.prepare(
+    `UPDATE sessions SET points_json = ? WHERE ended_at IS NULL`,
+  ).run(JSON.stringify(merged))
+  const revision = bumpRevision()
+  res.json({ ok: true, points: merged, revision })
 })
 
 app.post('/api/sessions/:id/stop', (req, res) => {
   const endedAt = req.body?.endedAt || new Date().toISOString()
-  const points = req.body?.points
-  if (points) {
-    db.prepare(
-      'UPDATE sessions SET ended_at = ?, points_json = ? WHERE id = ?',
-    ).run(endedAt, JSON.stringify(points), req.params.id)
-  } else {
-    db.prepare('UPDATE sessions SET ended_at = ? WHERE id = ?').run(
-      endedAt,
-      req.params.id,
-    )
-  }
-  res.json({ ok: true })
+  const points = Array.isArray(req.body?.points) ? req.body.points : null
+  const group = getActiveGroupSession()
+  const merged = points
+    ? mergePoints(group.points || [], points)
+    : group.points || []
+
+  // Lopeta KAIKKI auki olevat sessiot — kalastus päättyy koko ryhmältä
+  db.prepare(
+    `UPDATE sessions SET ended_at = ?, points_json = ? WHERE ended_at IS NULL`,
+  ).run(endedAt, JSON.stringify(merged))
+  const revision = bumpRevision()
+  res.json({ ok: true, revision })
 })
 
 app.post('/api/fishing-days', (req, res) => {
@@ -174,7 +215,8 @@ app.post('/api/fishing-days', (req, res) => {
     `INSERT OR REPLACE INTO fishing_days (id, date, title, participants_json)
      VALUES (?, ?, ?, ?)`,
   ).run(d.id, d.date, d.title, JSON.stringify(d.participants ?? []))
-  res.json({ ok: true })
+  const revision = bumpRevision()
+  res.json({ ok: true, revision })
 })
 
 const WATER_OSM_KEYS = new Set([

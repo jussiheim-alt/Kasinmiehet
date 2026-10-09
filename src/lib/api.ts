@@ -24,10 +24,21 @@ export async function apiSend(
   method: 'POST' | 'PUT',
   body: unknown,
 ): Promise<void> {
+  await apiSendJson(path, method, body)
+}
+
+export async function apiSendJson<T = unknown>(
+  path: string,
+  method: 'POST' | 'PUT',
+  body: unknown,
+): Promise<T> {
   const res = await fetch(apiUrl(path), {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`${method} ${path} → ${res.status}`)
+  const text = await res.text()
+  if (!text) return undefined as T
+  return JSON.parse(text) as T
 }
