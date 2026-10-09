@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authMiddleware, loginWithPin, logoutToken } from './auth.js'
 import db from './db.js'
+import { fetchNearestWaterTemp } from './waterTemp.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -265,6 +266,30 @@ async function photonNearWater(lat, lng) {
 }
 
 /** OSM water proximity (Overpass + Photon fallback). */
+/** Pintaveden lämpötila: SYKE Hydrologiarajapinta (ympäristö.fi). */
+app.get('/api/water-temp', async (req, res) => {
+  const lat = Number(req.query.lat)
+  const lng = Number(req.query.lng)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: 'lat/lng required' })
+  }
+  try {
+    const result = await fetchNearestWaterTemp(lat, lng)
+    if (!result) {
+      return res.json({
+        waterTempC: null,
+        message: 'Ei tuoretta SYKE-vedenlämpöä lähialueella',
+      })
+    }
+    res.json(result)
+  } catch (e) {
+    res.status(502).json({
+      waterTempC: null,
+      error: e instanceof Error ? e.message : 'SYKE water temp failed',
+    })
+  }
+})
+
 app.get('/api/near-water', async (req, res) => {
   const lat = Number(req.query.lat)
   const lng = Number(req.query.lng)

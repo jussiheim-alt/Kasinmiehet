@@ -372,6 +372,16 @@ function Home({
           <span>Vesi</span>
         </div>
       </div>
+      {store.weather.waterTempC != null && store.weather.waterTempStation && (
+        <p className="muted" style={{ margin: '-8px 0 14px', fontSize: '0.75rem' }}>
+          Vedenlämpö: {store.weather.waterTempStation}
+          {store.weather.waterTempDistanceKm != null
+            ? ` (${store.weather.waterTempDistanceKm} km)`
+            : ''}
+          {' · '}
+          SYKE / ympäristö.fi
+        </p>
+      )}
 
       {store.state.session.active && store.state.session.startedAt ? (
         <div className="session-banner glass">

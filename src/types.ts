@@ -38,6 +38,10 @@ export interface WeatherSnapshot {
   windDir: string
   pressureHpa: number
   waterTempC?: number
+  /** SYKE / ympäristö.fi -havaintopaikka */
+  waterTempStation?: string
+  waterTempDistanceKm?: number
+  waterTempObservedAt?: string
 }
 
 export interface FishingSession {
