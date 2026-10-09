@@ -95,6 +95,91 @@ export function getActiveGroupSession() {
   }
 }
 
+export function dateKeyHelsinki(isoOrDate) {
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Helsinki',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
+}
+
+/** Tallentaa päättyneen session reitin kalastuspäivälle (luo päivän tarvittaessa). */
+export function saveRouteToFishingDay({
+  date,
+  points,
+  participants = [],
+  title,
+  mapVisible = true,
+}) {
+  const existing = db
+    .prepare(`SELECT * FROM fishing_days WHERE date = ? ORDER BY id LIMIT 1`)
+    .get(date)
+
+  const mergedPoints = mergePoints(
+    existing ? JSON.parse(existing.route_points_json || '[]') : [],
+    points || [],
+  )
+  const mergedParticipants = [
+    ...new Set([
+      ...(existing ? JSON.parse(existing.participants_json || '[]') : []),
+      ...participants,
+    ]),
+  ]
+
+  if (existing) {
+    db.prepare(
+      `UPDATE fishing_days
+       SET route_points_json = ?,
+           participants_json = ?,
+           map_visible = CASE WHEN ? = 1 THEN 1 ELSE map_visible END
+       WHERE id = ?`,
+    ).run(
+      JSON.stringify(mergedPoints),
+      JSON.stringify(mergedParticipants),
+      mapVisible ? 1 : 0,
+      existing.id,
+    )
+    return existing.id
+  }
+
+  const id = `d-${date}-${Date.now()}`
+  db.prepare(
+    `INSERT INTO fishing_days
+      (id, date, title, participants_json, map_visible, route_points_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    date,
+    title || 'Kalastuspäivä',
+    JSON.stringify(mergedParticipants),
+    mapVisible ? 1 : 0,
+    JSON.stringify(mergedPoints),
+  )
+  return id
+}
+
+/** Kerää päättyneiden sessioiden reitit kalastuspäiville (kertaluonteinen backfill). */
+export function backfillRoutesFromSessions() {
+  const rows = db
+    .prepare(
+      `SELECT id, user_id AS userId, started_at AS startedAt, points_json AS pointsJson
+       FROM sessions WHERE ended_at IS NOT NULL`,
+    )
+    .all()
+  for (const row of rows) {
+    const points = JSON.parse(row.pointsJson || '[]')
+    if (!points.length) continue
+    saveRouteToFishingDay({
+      date: dateKeyHelsinki(row.startedAt),
+      points: points.map((p) => ({ ...p, userId: p.userId || row.userId })),
+      participants: [row.userId],
+      mapVisible: false,
+    })
+  }
+}
+
 export function buildSyncPayload(userId) {
   const species = db
     .prepare('SELECT id, name, created_by AS createdBy FROM species ORDER BY name')
@@ -119,14 +204,18 @@ export function buildSyncPayload(userId) {
     }))
   const fishingDays = db
     .prepare(
-      `SELECT id, date, title, participants_json AS participantsJson FROM fishing_days ORDER BY date`,
+      `SELECT id, date, title, participants_json AS participantsJson,
+              map_visible AS mapVisible, route_points_json AS routePointsJson
+       FROM fishing_days ORDER BY date DESC`,
     )
     .all()
     .map((d) => ({
       id: d.id,
       date: d.date,
       title: d.title,
-      participants: JSON.parse(d.participantsJson),
+      participants: JSON.parse(d.participantsJson || '[]'),
+      mapVisible: Boolean(d.mapVisible),
+      routePoints: JSON.parse(d.routePointsJson || '[]'),
     }))
   const undesired = userId
     ? db
@@ -148,3 +237,10 @@ export function buildSyncPayload(userId) {
 }
 
 export { mergePoints }
+
+// Varmista että vanhat sessioreitit löytyvät kalastuspäiviltä
+try {
+  backfillRoutesFromSessions()
+} catch {
+  /* ignore backfill errors on boot */
+}

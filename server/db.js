@@ -59,6 +59,17 @@ CREATE TABLE IF NOT EXISTS fishing_days (
 );
 `)
 
+// Migraatiot: reitti + karttanäkyvyys kalastuspäiville
+const fishingDayCols = db.prepare(`PRAGMA table_info(fishing_days)`).all().map((c) => c.name)
+if (!fishingDayCols.includes('map_visible')) {
+  db.exec(`ALTER TABLE fishing_days ADD COLUMN map_visible INTEGER NOT NULL DEFAULT 0`)
+}
+if (!fishingDayCols.includes('route_points_json')) {
+  db.exec(
+    `ALTER TABLE fishing_days ADD COLUMN route_points_json TEXT NOT NULL DEFAULT '[]'`,
+  )
+}
+
 const seedUsers = [
   ['olli', 'Olli'],
   ['matti', 'Matti'],

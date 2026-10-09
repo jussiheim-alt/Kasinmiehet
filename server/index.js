@@ -9,9 +9,11 @@ import {
   addSseClient,
   buildSyncPayload,
   bumpRevision,
+  dateKeyHelsinki,
   getActiveGroupSession,
   getRevision,
   mergePoints,
+  saveRouteToFishingDay,
 } from './sync.js'
 import { fetchNearestWaterTemp } from './waterTemp.js'
 
@@ -202,8 +204,22 @@ app.post('/api/sessions/:id/stop', (req, res) => {
   db.prepare(
     `UPDATE sessions SET ended_at = ?, points_json = ? WHERE ended_at IS NULL`,
   ).run(endedAt, JSON.stringify(merged))
+
+  // Tallenna reitti kalastuspäivälle (näkyy kartalla kun päivä on täpätty aktiiviseksi)
+  let fishingDayId = null
+  if (merged.length) {
+    const date = dateKeyHelsinki(group.startedAt || endedAt)
+    fishingDayId = saveRouteToFishingDay({
+      date,
+      points: merged,
+      participants: group.participants || [],
+      title: 'Kalastuspäivä',
+      mapVisible: true,
+    })
+  }
+
   const revision = bumpRevision()
-  res.json({ ok: true, revision })
+  res.json({ ok: true, revision, fishingDayId, routePoints: merged.length })
 })
 
 app.post('/api/fishing-days', (req, res) => {
@@ -211,12 +227,38 @@ app.post('/api/fishing-days', (req, res) => {
   if (!d.id || !d.date || !d.title) {
     return res.status(400).json({ error: 'missing fields' })
   }
-  db.prepare(
-    `INSERT OR REPLACE INTO fishing_days (id, date, title, participants_json)
-     VALUES (?, ?, ?, ?)`,
-  ).run(d.id, d.date, d.title, JSON.stringify(d.participants ?? []))
+  const existing = db.prepare(`SELECT id FROM fishing_days WHERE id = ?`).get(d.id)
+  if (existing) {
+    db.prepare(
+      `UPDATE fishing_days SET date = ?, title = ?, participants_json = ? WHERE id = ?`,
+    ).run(d.date, d.title, JSON.stringify(d.participants ?? []), d.id)
+  } else {
+    db.prepare(
+      `INSERT INTO fishing_days
+        (id, date, title, participants_json, map_visible, route_points_json)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      d.id,
+      d.date,
+      d.title,
+      JSON.stringify(d.participants ?? []),
+      d.mapVisible ? 1 : 0,
+      JSON.stringify(d.routePoints ?? []),
+    )
+  }
   const revision = bumpRevision()
   res.json({ ok: true, revision })
+})
+
+/** Kalastuspäivä kartalla päälle / pois */
+app.put('/api/fishing-days/:id/map-visible', (req, res) => {
+  const mapVisible = Boolean(req.body?.mapVisible)
+  const info = db
+    .prepare(`UPDATE fishing_days SET map_visible = ? WHERE id = ?`)
+    .run(mapVisible ? 1 : 0, req.params.id)
+  if (!info.changes) return res.status(404).json({ error: 'not found' })
+  const revision = bumpRevision()
+  res.json({ ok: true, revision, mapVisible })
 })
 
 const WATER_OSM_KEYS = new Set([

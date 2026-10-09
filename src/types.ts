@@ -65,6 +65,10 @@ export interface FishingDay {
   date: string
   title: string
   participants: UserId[]
+  /** Näytä reitti kartalla */
+  mapVisible?: boolean
+  /** Tallennettu GPS-reitti */
+  routePoints?: RoutePoint[]
 }
 
 export interface AppState {

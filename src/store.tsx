@@ -97,6 +97,7 @@ interface StoreApi {
   toggleUndesired: (speciesId: string) => void
   addSpecies: (name: string) => void
   addFishingDay: (date: string, title: string) => void
+  toggleFishingDayOnMap: (dayId: string) => void
   sendDeparture: () => Promise<string>
   shareCatch: (catchId: string) => Promise<boolean>
   recordWaterPrompt: (accepted: boolean) => Promise<void>
@@ -580,13 +581,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         id: `d-${Date.now()}`,
         date,
         title: title || 'Kalastuspäivä',
-        participants: state.currentUserId ? [state.currentUserId] : [],
+        participants: (state.currentUserId ? [state.currentUserId] : []) as UserId[],
+        mapVisible: false,
+        routePoints: [],
       }
       setState((s) => ({
         ...s,
         fishingDays: [...s.fishingDays, day],
       }))
       void apiSend('/api/fishing-days', 'POST', day)
+        .then(() => {
+          revisionRef.current += 1
+          void pullSync(state.currentUserId, true)
+        })
+        .catch(() => setApiOnline(false))
+    },
+    toggleFishingDayOnMap: (dayId) => {
+      const day = state.fishingDays.find((d) => d.id === dayId)
+      if (!day) return
+      const mapVisible = !day.mapVisible
+      setState((s) => ({
+        ...s,
+        fishingDays: s.fishingDays.map((d) =>
+          d.id === dayId ? { ...d, mapVisible } : d,
+        ),
+      }))
+      void apiSend(`/api/fishing-days/${dayId}/map-visible`, 'PUT', { mapVisible })
         .then(() => {
           revisionRef.current += 1
           void pullSync(state.currentUserId, true)

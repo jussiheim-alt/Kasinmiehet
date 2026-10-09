@@ -590,17 +590,34 @@ function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
         <h1>Kartta</h1>
       </div>
       <p className="muted" style={{ marginTop: 0 }}>
-        Kalastuskartta: SYKE:n syvyyskäyrät + saaliit kalasymboleina lajin värillä.
-        Kerrokset voi vaihtaa kartan vasemmasta yläkulmasta.
+        Kalastuskartta: SYKE:n syvyyskäyrät, saaliit kalasymboleina ja kalastuspäivien
+        reitit viivoina. Kerrokset vasemmasta yläkulmasta.
       </p>
       <div className="map-panel map-panel-live">
         <CatchMap
           catches={store.state.catches}
           areaHint={store.areaHint}
           center={store.lastFix}
-          routePoints={
-            store.state.session.active ? store.state.session.points : undefined
-          }
+          routes={[
+            ...store.state.fishingDays
+              .filter((d) => d.mapVisible && (d.routePoints?.length ?? 0) > 1)
+              .map((d) => ({
+                id: d.id,
+                label: `${d.title} · ${new Date(`${d.date}T12:00:00`).toLocaleDateString('fi-FI')}`,
+                points: d.routePoints ?? [],
+              })),
+            ...(store.state.session.active && store.state.session.points.length > 1
+              ? [
+                  {
+                    id: 'live',
+                    label: 'Käynnissä oleva kalastus',
+                    points: store.state.session.points,
+                    live: true as const,
+                    color: '#3ec6b0',
+                  },
+                ]
+              : []),
+          ]}
           speciesName={speciesName}
         />
       </div>
@@ -620,19 +637,28 @@ function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
           ))}
         </div>
         <p className="muted" style={{ margin: '8px 0 0', fontSize: '0.75rem' }}>
-          Syvyysaineisto © SYKE (CC BY 4.0). Kaikilla järvillä ei ole luotausta.
+          Syvyysaineisto © SYKE (CC BY 4.0). Kalastuspäivän reitti näkyy, kun
+          päivä on täpätty kartalle Kalenteri-näkymässä.
         </p>
       </div>
-      {store.state.session.points.length > 0 && (
-        <p className="muted" style={{ fontSize: '0.85rem' }}>
-          Viimeisin reitti: {store.state.session.points.length} GPS-pistettä
-          {store.trackingMode === 'native-background'
-            ? ' (natiivi tausta)'
-            : store.trackingMode === 'web'
-              ? ' (selain)'
-              : ''}
-        </p>
-      )}
+      {(() => {
+        const visible = store.state.fishingDays.filter(
+          (d) => d.mapVisible && (d.routePoints?.length ?? 0) > 1,
+        )
+        if (!visible.length && !store.state.session.active) return null
+        return (
+          <p className="muted" style={{ fontSize: '0.85rem' }}>
+            Reittejä kartalla:{' '}
+            {store.state.session.active
+              ? `käynnissä (${store.state.session.points.length} pistettä)`
+              : null}
+            {store.state.session.active && visible.length ? ' · ' : ''}
+            {visible
+              .map((d) => `${d.title} (${d.routePoints?.length ?? 0})`)
+              .join(' · ')}
+          </p>
+        )
+      })()}
       <div className="section-title" style={{ marginTop: 18 }}>
         <h2>Aluevinkit</h2>
       </div>
@@ -827,17 +853,21 @@ function CalendarScreen({
       </div>
 
       <h2 className="section-title">Ryhmän kalastuspäivät</h2>
+      <p className="muted" style={{ marginTop: 0, fontSize: '0.85rem' }}>
+        Täppää “Kartalla” — tallennettu reitti piirtyy viivana karttaan.
+      </p>
       <div className="stack" style={{ marginBottom: 18 }}>
         {store.state.fishingDays.length === 0 && (
           <p className="muted" style={{ margin: 0 }}>
-            Ei vielä merkittyjä päiviä.
+            Ei vielä merkittyjä päiviä. Reitti tallentuu, kun lopetat kalastuksen.
           </p>
         )}
         {store.state.fishingDays.map((d) => {
           const tip = ratingByDate.get(d.date)
+          const routeCount = d.routePoints?.length ?? 0
           return (
             <div key={d.id} className="day-row glass">
-              <div>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <strong>{d.title}</strong>
                 <div className="muted" style={{ fontSize: '0.85rem' }}>
                   {new Date(`${d.date}T12:00:00`).toLocaleDateString('fi-FI', {
@@ -845,7 +875,8 @@ function CalendarScreen({
                     day: 'numeric',
                     month: 'short',
                   })}{' '}
-                  · {d.participants.map((id) => USERS.find((u) => u.id === id)?.name).join(', ')}
+                  · {d.participants.map((id) => USERS.find((u) => u.id === id)?.name).join(', ') || '—'}
+                  {routeCount > 1 ? ` · ${routeCount} reittipistettä` : ' · ei reittiä vielä'}
                 </div>
                 {tip && (
                   <span className={`fish-cal-badge inline level-${tip.level}`}>
@@ -853,9 +884,19 @@ function CalendarScreen({
                   </span>
                 )}
               </div>
-              <button type="button" className="btn btn-ghost" style={{ minHeight: 38, padding: '0 12px' }} onClick={onNotify}>
-                Muistuta
-              </button>
+              <label className="day-map-toggle" title="Näytä reitti kartalla">
+                <span className="muted" style={{ fontSize: '0.75rem' }}>
+                  Kartalla
+                </span>
+                <button
+                  type="button"
+                  className={`toggle ${d.mapVisible ? 'on' : ''}`}
+                  aria-pressed={Boolean(d.mapVisible)}
+                  aria-label={`${d.title} kartalla`}
+                  disabled={routeCount < 2}
+                  onClick={() => store.toggleFishingDayOnMap(d.id)}
+                />
+              </label>
             </div>
           )
         })}

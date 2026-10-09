@@ -753,6 +753,19 @@ img {
   align-items: center;
 }
 
+.day-map-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.day-map-toggle .toggle:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .fish-cal-head {
   display: flex;
   flex-direction: column;

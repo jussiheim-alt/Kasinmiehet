@@ -2,12 +2,21 @@ import L from 'leaflet'
 import { useEffect, useRef } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { fishMarkerSvg, speciesColor } from '../lib/speciesStyle'
-import type { CatchRecord } from '../types'
+import type { CatchRecord, RoutePoint } from '../types'
 
 type Hint = 'good' | 'avoid' | 'neutral'
 
 const SYKE_WMS =
   'https://paikkatiedot.ymparisto.fi/geoserver/inspire_el/wms'
+
+const ROUTE_COLORS = [
+  '#3ec6b0',
+  '#f0b429',
+  '#818cf8',
+  '#fb7185',
+  '#38bdf8',
+  '#a3e635',
+]
 
 function fishIcon(speciesId: string) {
   const color = speciesColor(speciesId)
@@ -20,17 +29,25 @@ function fishIcon(speciesId: string) {
   })
 }
 
+export type MapRoute = {
+  id: string
+  label: string
+  points: RoutePoint[]
+  color?: string
+  live?: boolean
+}
+
 export function CatchMap({
   catches,
   areaHint,
   center,
-  routePoints,
+  routes = [],
   speciesName,
 }: {
   catches: CatchRecord[]
   areaHint: (lat: number, lng: number) => Hint
   center?: { lat: number; lng: number } | null
-  routePoints?: { lat: number; lng: number }[]
+  routes?: MapRoute[]
   speciesName: (id: string) => string
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -57,7 +74,6 @@ export function CatchMap({
         '&copy; OpenStreetMap, &copy; OpenTopoMap (CC-BY-SA)',
     })
 
-    // SYKE järvien/jokien syvyysalueet + syvyyskäyrät (CC BY 4.0)
     const depthAreas = L.tileLayer.wms(SYKE_WMS, {
       layers: 'EL.Syvyysalue',
       format: 'image/png',
@@ -130,7 +146,11 @@ export function CatchMap({
       }).addTo(overlays)
 
       const hintLabel =
-        hint === 'good' ? 'Haluttu (omat asetukset)' : hint === 'avoid' ? 'Ei-haluttu (omat asetukset)' : '—'
+        hint === 'good'
+          ? 'Haluttu (omat asetukset)'
+          : hint === 'avoid'
+            ? 'Ei-haluttu (omat asetukset)'
+            : '—'
 
       marker.bindPopup(
         `<strong style="color:${color}">${name}</strong><br/>
@@ -140,11 +160,24 @@ export function CatchMap({
       bounds.push([c.lat, c.lng])
     }
 
-    if (routePoints && routePoints.length > 1) {
-      const latlngs = routePoints.map((p) => [p.lat, p.lng] as L.LatLngExpression)
-      L.polyline(latlngs, { color: '#3ec6b0', weight: 3, opacity: 0.85 }).addTo(overlays)
+    routes.forEach((route, idx) => {
+      if (!route.points || route.points.length < 2) return
+      const color = route.color || ROUTE_COLORS[idx % ROUTE_COLORS.length]
+      const latlngs = route.points.map(
+        (p) => [p.lat, p.lng] as L.LatLngExpression,
+      )
+      L.polyline(latlngs, {
+        color,
+        weight: route.live ? 4 : 3,
+        opacity: route.live ? 0.95 : 0.8,
+        dashArray: route.live ? undefined : undefined,
+      })
+        .bindPopup(
+          `<strong>${route.label}</strong><br/>${route.points.length} GPS-pistettä`,
+        )
+        .addTo(overlays)
       bounds.push(...latlngs)
-    }
+    })
 
     if (center) {
       L.circleMarker([center.lat, center.lng], {
@@ -159,17 +192,16 @@ export function CatchMap({
     }
 
     if (bounds.length) {
-      const fitKey = `${catches.length}:${routePoints?.length ?? 0}:${center ? 1 : 0}`
-      // Sovitetaan uudelleen kun aineisto muuttuu merkittävästi (ei joka syncissä).
+      const fitKey = `${catches.length}:${routes.map((r) => r.id).join(',')}:${center ? 1 : 0}`
       if (fitKey !== lastFitKeyRef.current) {
         map.fitBounds(L.latLngBounds(bounds), {
           padding: [28, 28],
-          maxZoom: catches.length <= 3 ? 13 : 12,
+          maxZoom: 13,
         })
         lastFitKeyRef.current = fitKey
       }
     }
-  }, [catches, areaHint, center, routePoints, speciesName])
+  }, [catches, areaHint, center, routes, speciesName])
 
   return <div ref={ref} className="leaflet-map" />
 }
