@@ -61,11 +61,15 @@ export default function App() {
   }, [store.state.currentUserId, screen])
 
   useEffect(() => {
+    if (screen !== 'home') {
+      setShowWaterPrompt(false)
+      return
+    }
     if (!store.state.currentUserId || store.state.session.active) return
     if (store.waterPromptsLeft <= 0) return
     const t = window.setTimeout(() => setShowWaterPrompt(true), 2200)
     return () => window.clearTimeout(t)
-  }, [store.state.currentUserId, store.state.session.active, store.waterPromptsLeft])
+  }, [screen, store.state.currentUserId, store.state.session.active, store.waterPromptsLeft])
 
   useEffect(() => {
     if (!toast) return
