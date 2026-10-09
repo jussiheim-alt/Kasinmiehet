@@ -31,7 +31,8 @@
     "express": "^5.2.1",
     "leaflet": "^1.9.4",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "suncalc": "^2.1.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
@@ -40,6 +41,7 @@
     "@types/leaflet": "^1.9.22",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
+    "@types/suncalc": "^1.9.2",
     "@vitejs/plugin-react": "^4.4.1",
     "concurrently": "^10.0.6",
     "playwright": "^1.64.0",

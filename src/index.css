@@ -696,6 +696,136 @@ img {
   align-items: center;
 }
 
+.fish-cal-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+
+.fish-cal-list {
+  display: grid;
+  gap: 8px;
+}
+
+.fish-cal-day {
+  border-radius: 14px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+.fish-cal-summary {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.fish-cal-when {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.fish-cal-score {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  min-width: 2.2em;
+  text-align: right;
+}
+
+.fish-cal-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.fish-cal-badge.inline {
+  margin-top: 6px;
+}
+
+.fish-cal-badge.level-hyva,
+.fish-cal-day.level-hyva .fish-cal-badge {
+  color: #052e1a;
+  background: rgba(74, 222, 128, 0.92);
+  border-color: rgba(74, 222, 128, 0.4);
+}
+
+.fish-cal-badge.level-keskiverto,
+.fish-cal-day.level-keskiverto .fish-cal-badge {
+  color: #2a1d00;
+  background: rgba(240, 180, 41, 0.9);
+  border-color: rgba(240, 180, 41, 0.35);
+}
+
+.fish-cal-badge.level-kohtalainen,
+.fish-cal-day.level-kohtalainen .fish-cal-badge {
+  color: #1a2430;
+  background: rgba(180, 200, 220, 0.85);
+  border-color: rgba(180, 200, 220, 0.3);
+}
+
+.fish-cal-badge.level-huono,
+.fish-cal-day.level-huono .fish-cal-badge {
+  color: #3b0a0a;
+  background: rgba(251, 113, 133, 0.9);
+  border-color: rgba(251, 113, 133, 0.35);
+}
+
+.fish-cal-detail {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--stroke);
+  padding-top: 12px;
+  animation: riseIn 0.25s ease both;
+}
+
+.fish-cal-astro {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  font-size: 0.82rem;
+}
+
+.fish-cal-feeds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.feed-chip {
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.04);
+  font-variant-numeric: tabular-nums;
+}
+
+.feed-chip.pimea {
+  background: rgba(60, 80, 120, 0.35);
+}
+
+.feed-chip.valoisa {
+  background: rgba(240, 180, 41, 0.18);
+}
+
+h2.section-title {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
 .muted {
   color: var(--text-muted);
 }

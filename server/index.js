@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import db from './db.js'
+import { fetchFishingCalendar } from './kalakalenteri.js'
 import { fetchNearestWaterTemp } from './waterTemp.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -243,6 +244,23 @@ async function photonNearWater(lat, lng) {
     /satama|meri|järvi|lahti|ranta|harbour|marina|bay/.test(name)
   return { nearWater, count: nearWater ? 1 : 0, source: 'photon', detail: { key, value, name: props.name } }
 }
+
+/** Kalastuskalenteri: päiväarviot kalakalenteri.fi (tai solunar-varalla). */
+app.get('/api/kalakalenteri', async (req, res) => {
+  const lat = Number(req.query.lat)
+  const lng = Number(req.query.lng)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: 'lat/lng required' })
+  }
+  try {
+    const result = await fetchFishingCalendar(lat, lng)
+    res.json({ lat, lng, ...result })
+  } catch (e) {
+    res.status(502).json({
+      error: e instanceof Error ? e.message : 'kalakalenteri failed',
+    })
+  }
+})
 
 /** OSM water proximity (Overpass + Photon fallback). */
 /** Pintaveden lämpötila: SYKE Hydrologiarajapinta (ympäristö.fi). */

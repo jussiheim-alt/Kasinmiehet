@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CatchMap } from './components/CatchMap'
 import { formatDuration, formatWhen, USERS } from './data'
+import { apiGet } from './lib/api'
 import { useStore } from './store'
 import type { Screen } from './types'
 
@@ -626,6 +627,24 @@ function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
   )
 }
 
+type CalendarDay = {
+  date: string
+  rating: number
+  level: 'hyva' | 'keskiverto' | 'kohtalainen' | 'huono'
+  label: string
+  shortLabel: string
+  sun: { rise: string | null; set: string | null } | null
+  moon: { rise: string | null; set: string | null } | null
+  feedWindows: { kind: string; start: string; end: string }[]
+}
+
+type CalendarPayload = {
+  days: CalendarDay[]
+  attribution: string
+  source: string
+  warning?: string
+}
+
 function CalendarScreen({
   onNotify,
   onDeparture,
@@ -636,31 +655,169 @@ function CalendarScreen({
   const store = useStore()
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [title, setTitle] = useState('')
+  const [cal, setCal] = useState<CalendarPayload | null>(null)
+  const [calError, setCalError] = useState<string | null>(null)
+  const [calLoading, setCalLoading] = useState(true)
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setCalLoading(true)
+      setCalError(null)
+      try {
+        const fix = store.lastFix
+        const lat = fix?.lat ?? 60.17
+        const lng = fix?.lng ?? 24.94
+        const data = await apiGet<CalendarPayload>(
+          `/api/kalakalenteri?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`,
+        )
+        if (!cancelled) {
+          setCal(data)
+          const today = new Date().toISOString().slice(0, 10)
+          setExpanded(data.days.find((d) => d.date === today)?.date ?? data.days[0]?.date ?? null)
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setCalError(e instanceof Error ? e.message : 'Kalenteri ei latautunut')
+        }
+      } finally {
+        if (!cancelled) setCalLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [store.lastFix?.lat, store.lastFix?.lng])
+
+  const ratingByDate = new Map((cal?.days ?? []).map((d) => [d.date, d]))
 
   return (
     <section className="screen">
       <div className="topbar">
         <h1>Kalenteri</h1>
       </div>
-      <div className="stack" style={{ marginBottom: 18 }}>
-        {store.state.fishingDays.map((d) => (
-          <div key={d.id} className="day-row glass">
-            <div>
-              <strong>{d.title}</strong>
-              <div className="muted" style={{ fontSize: '0.85rem' }}>
-                {new Date(d.date).toLocaleDateString('fi-FI', {
-                  weekday: 'short',
-                  day: 'numeric',
-                  month: 'short',
-                })}{' '}
-                · {d.participants.map((id) => USERS.find((u) => u.id === id)?.name).join(', ')}
+
+      <div className="glass fish-cal" style={{ padding: 16, marginBottom: 18 }}>
+        <div className="fish-cal-head">
+          <strong>Kalastuskalenteri</strong>
+          <span className="muted" style={{ fontSize: '0.8rem' }}>
+            {calLoading ? 'Ladataan…' : cal?.attribution || '—'}
+          </span>
+        </div>
+        {calError && (
+          <p className="muted" style={{ margin: '8px 0 0' }}>
+            {calError}
+          </p>
+        )}
+        {cal?.warning && !calError && (
+          <p className="muted" style={{ margin: '8px 0 0', fontSize: '0.8rem' }}>
+            Varalla oleva arvio ({cal.warning})
+          </p>
+        )}
+        <div className="fish-cal-list">
+          {(cal?.days ?? []).map((d) => {
+            const open = expanded === d.date
+            const when = new Date(`${d.date}T12:00:00`).toLocaleDateString('fi-FI', {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'numeric',
+            })
+            return (
+              <div key={d.date} className={`fish-cal-day level-${d.level}`}>
+                <button
+                  type="button"
+                  className="fish-cal-summary"
+                  onClick={() => setExpanded(open ? null : d.date)}
+                  aria-expanded={open}
+                >
+                  <span className="fish-cal-when">{when}</span>
+                  <span className={`fish-cal-badge level-${d.level}`}>{d.shortLabel}</span>
+                  <span className="fish-cal-score">{d.rating.toFixed(1)}</span>
+                </button>
+                {open && (
+                  <div className="fish-cal-detail">
+                    <p style={{ margin: '0 0 8px' }}>{d.label}</p>
+                    {(d.sun || d.moon) && (
+                      <div className="fish-cal-astro muted">
+                        {d.sun && (
+                          <span>
+                            Aurinko {d.sun.rise ?? '—'} → {d.sun.set ?? '—'}
+                          </span>
+                        )}
+                        {d.moon && (
+                          <span>
+                            Kuu {d.moon.rise ?? '—'} → {d.moon.set ?? '—'}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {d.feedWindows.length > 0 && (
+                      <>
+                        <div className="muted" style={{ fontSize: '0.8rem', marginTop: 8 }}>
+                          Syöntiajat
+                        </div>
+                        <div className="fish-cal-feeds">
+                          {d.feedWindows.map((w, i) => (
+                            <span key={`${d.date}-${i}`} className={`feed-chip ${w.kind}`}>
+                              {w.start}–{w.end}
+                            </span>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ minHeight: 36, marginTop: 10, padding: '0 12px' }}
+                      onClick={() => {
+                        setDate(d.date)
+                        setTitle(`${d.shortLabel} kalastus`)
+                      }}
+                    >
+                      Käytä päivänä
+                    </button>
+                  </div>
+                )}
               </div>
+            )
+          })}
+        </div>
+      </div>
+
+      <h2 className="section-title">Ryhmän kalastuspäivät</h2>
+      <div className="stack" style={{ marginBottom: 18 }}>
+        {store.state.fishingDays.length === 0 && (
+          <p className="muted" style={{ margin: 0 }}>
+            Ei vielä merkittyjä päiviä.
+          </p>
+        )}
+        {store.state.fishingDays.map((d) => {
+          const tip = ratingByDate.get(d.date)
+          return (
+            <div key={d.id} className="day-row glass">
+              <div>
+                <strong>{d.title}</strong>
+                <div className="muted" style={{ fontSize: '0.85rem' }}>
+                  {new Date(`${d.date}T12:00:00`).toLocaleDateString('fi-FI', {
+                    weekday: 'short',
+                    day: 'numeric',
+                    month: 'short',
+                  })}{' '}
+                  · {d.participants.map((id) => USERS.find((u) => u.id === id)?.name).join(', ')}
+                </div>
+                {tip && (
+                  <span className={`fish-cal-badge inline level-${tip.level}`}>
+                    {tip.shortLabel} · {tip.rating.toFixed(1)}
+                  </span>
+                )}
+              </div>
+              <button type="button" className="btn btn-ghost" style={{ minHeight: 38, padding: '0 12px' }} onClick={onNotify}>
+                Muistuta
+              </button>
             </div>
-            <button type="button" className="btn btn-ghost" style={{ minHeight: 38, padding: '0 12px' }} onClick={onNotify}>
-              Muistuta
-            </button>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       <div className="glass" style={{ padding: 16 }}>
