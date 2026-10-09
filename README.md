@@ -14,6 +14,19 @@ npm run dev
 
 Vite proxyttaa `/api` → backend. SQLite-tiedosto: `server/data/kasinmiehet.sqlite`.
 
+## Render (tuotanto)
+
+Yksi Web Service palvelee UI:n + API:n (`render.yaml`).
+
+1. Render Dashboard → **New** → **Blueprint** (tai Web Service) → tämä GitHub-repo  
+2. Branch: `main` (mergen jälkeen) tai `cursor/kalastussovellus-ui-de9c` testiin  
+3. Build: `npm install && npm run build` · Start: `npm start`  
+4. Lisää **Persistent Disk** polkuun `/var/data` (SQLite säilyy restartien yli; free-planilla disk voi vaatia maksullisen planin)
+
+Terveys: `https://<palvelu>.onrender.com/api/health`
+
+Ilman levyä data voi hävitä cold start / redeploy -tilanteessa — levy on suositeltu.
+
 ## Android
 
 ```bash

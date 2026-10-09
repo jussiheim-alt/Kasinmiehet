@@ -8,10 +8,14 @@
     "dev:web": "vite",
     "dev:api": "node server/index.js",
     "build": "tsc --noEmit && vite build",
+    "start": "node server/index.js",
     "preview": "vite preview",
     "sync:android": "npm run build && npx cap sync android",
     "sync:ios": "npm run build && npx cap sync ios",
     "sync:native": "npm run build && npx cap sync"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",
