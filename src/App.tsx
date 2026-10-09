@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { CatchMap } from './components/CatchMap'
 import { formatDuration, formatWhen, USERS } from './data'
 import { useStore } from './store'
 import type { Screen } from './types'
@@ -93,7 +94,11 @@ export default function App() {
       <div className="app-shell">
         <div className="app-bg" aria-hidden />
         <div className="app-frame">
-          <Login onPick={(id) => store.login(id)} />
+          <Login
+            onLogin={async (id, pin) => {
+              await store.login(id, pin)
+            }}
+          />
         </div>
       </div>
     )
@@ -156,7 +161,11 @@ export default function App() {
           />
         )}
         {screen === 'settings' && (
-          <SettingsScreen onLogout={() => store.logout()} />
+          <SettingsScreen
+            onLogout={() => {
+              void store.logout()
+            }}
+          />
         )}
 
         <nav className="nav" aria-label="Päänavigaatio">
@@ -224,7 +233,16 @@ export default function App() {
   )
 }
 
-function Login({ onPick }: { onPick: (id: 'olli' | 'matti' | 'jussi') => void }) {
+function Login({
+  onLogin,
+}: {
+  onLogin: (id: 'olli' | 'matti' | 'jussi', pin: string) => Promise<void>
+}) {
+  const [userId, setUserId] = useState<'olli' | 'matti' | 'jussi' | ''>('')
+  const [pin, setPin] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
   return (
     <section className="screen login-screen">
       <div className="eyebrow">Yksityinen ryhmäappi</div>
@@ -234,21 +252,63 @@ function Login({ onPick }: { onPick: (id: 'olli' | 'matti' | 'jussi') => void })
         <span>miehet</span>
       </h1>
       <p className="lede">
-        Saaliit, reitit ja kalastuspäivät — Olli, Matti ja Jussi samassa veneessä.
+        Kirjaudu omalla PIN-koodilla. Toisen profiilia ei voi avata ilman hänen
+        koodiaan.
       </p>
-      <div className="user-grid">
-        {USERS.map((u) => (
-          <button key={u.id} type="button" className="user-chip" onClick={() => onPick(u.id)}>
-            <span className="avatar">{u.initials}</span>
-            <span>
-              <strong>{u.name}</strong>
-              <br />
-              <span className="muted" style={{ fontSize: '0.85rem' }}>
-                Jatka käyttäjänä
-              </span>
-            </span>
-          </button>
-        ))}
+
+      <div className="glass" style={{ padding: 16, marginTop: 22 }}>
+        <div className="field">
+          <label htmlFor="who">Oma profiili</label>
+          <select
+            id="who"
+            value={userId}
+            onChange={(e) => setUserId(e.target.value as typeof userId)}
+          >
+            <option value="">Valitse…</option>
+            {USERS.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="pin">PIN</label>
+          <input
+            id="pin"
+            type="password"
+            inputMode="numeric"
+            autoComplete="current-password"
+            placeholder="••••"
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+          />
+        </div>
+        {error && (
+          <p style={{ color: '#fecdd3', margin: '0 0 12px', fontSize: '0.9rem' }}>
+            {error}
+          </p>
+        )}
+        <button
+          type="button"
+          className="btn btn-primary btn-block"
+          disabled={busy}
+          onClick={() => {
+            if (!userId || !pin) {
+              setError('Valitse profiili ja anna PIN')
+              return
+            }
+            setBusy(true)
+            setError(null)
+            void onLogin(userId, pin)
+              .catch((err: unknown) => {
+                setError(err instanceof Error ? err.message : 'Kirjautuminen epäonnistui')
+              })
+              .finally(() => setBusy(false))
+          }}
+        >
+          {busy ? 'Kirjaudutaan…' : 'Kirjaudu'}
+        </button>
       </div>
     </section>
   )
@@ -362,30 +422,37 @@ function Home({
           Kaikki
         </button>
       </div>
-      <div className="catch-list">
-        {recent.map((c) => {
-          const hint = store.areaHint(c.lat, c.lng)
-          const name = store.species.find((s) => s.id === c.speciesId)?.name ?? c.speciesId
-          const angler = USERS.find((u) => u.id === c.userId)?.name
-          return (
-            <div key={c.id} className="catch-row glass">
-              <div className="catch-icon">
-                <IconFish />
+      {recent.length === 0 ? (
+        <p className="muted glass" style={{ padding: 16, margin: 0 }}>
+          Ei vielä saaliita. Kirjaa ensimmäinen painikkeella “Kirjaa saalis”.
+        </p>
+      ) : (
+        <div className="catch-list">
+          {recent.map((c) => {
+            const hint = store.areaHint(c.lat, c.lng)
+            const name =
+              store.species.find((s) => s.id === c.speciesId)?.name ?? c.speciesId
+            const angler = USERS.find((u) => u.id === c.userId)?.name
+            return (
+              <div key={c.id} className="catch-row glass">
+                <div className="catch-icon">
+                  <IconFish />
+                </div>
+                <div>
+                  <h3>{name}</h3>
+                  <p>
+                    {angler} · {formatWhen(c.createdAt)}
+                    {c.lengthCm ? ` · ${c.lengthCm} cm` : ''}
+                  </p>
+                </div>
+                <span className={`badge ${hint}`}>
+                  {hint === 'good' ? 'Hyvä' : hint === 'avoid' ? 'Vältä' : 'Alue'}
+                </span>
               </div>
-              <div>
-                <h3>{name}</h3>
-                <p>
-                  {angler} · {formatWhen(c.createdAt)}
-                  {c.lengthCm ? ` · ${c.lengthCm} cm` : ''}
-                </p>
-              </div>
-              <span className={`badge ${hint}`}>
-                {hint === 'good' ? 'Hyvä' : hint === 'avoid' ? 'Vältä' : 'Alue'}
-              </span>
-            </div>
-          )
-        })}
-      </div>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }
@@ -480,58 +547,65 @@ function CatchesList({
       <div className="topbar">
         <h1>Saaliit</h1>
       </div>
-      <div className="catch-list">
-        {store.state.catches.map((c) => {
-          const hint = store.areaHint(c.lat, c.lng)
-          return (
-            <div key={c.id} className="catch-row glass">
-              <div className="catch-icon">
-                <IconFish />
+      {store.state.catches.length === 0 ? (
+        <p className="muted glass" style={{ padding: 16, margin: 0 }}>
+          Ei saaliita vielä.
+        </p>
+      ) : (
+        <div className="catch-list">
+          {store.state.catches.map((c) => {
+            const hint = store.areaHint(c.lat, c.lng)
+            return (
+              <div key={c.id} className="catch-row glass">
+                <div className="catch-icon">
+                  <IconFish />
+                </div>
+                <div>
+                  <h3>{speciesName(c.speciesId)}</h3>
+                  <p>
+                    {USERS.find((u) => u.id === c.userId)?.name} ·{' '}
+                    {formatWhen(c.createdAt)}
+                    {c.lengthCm ? ` · ${c.lengthCm} cm` : ''}
+                  </p>
+                  <p>
+                    {c.weather.tempC}° · {c.weather.windMs} m/s · {c.weather.pressureHpa}{' '}
+                    hPa
+                    {c.weather.waterTempC != null
+                      ? ` · vesi ${c.weather.waterTempC}°`
+                      : ''}
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{
+                      minHeight: 34,
+                      marginTop: 8,
+                      padding: '0 12px',
+                      fontSize: '0.8rem',
+                    }}
+                    onClick={() => onShare(c.id)}
+                  >
+                    Jaa
+                  </button>
+                </div>
+                <span className={`badge ${hint}`}>
+                  {hint === 'good'
+                    ? 'Haluttu'
+                    : hint === 'avoid'
+                      ? 'Ei-haluttu'
+                      : '—'}
+                </span>
               </div>
-              <div>
-                <h3>{speciesName(c.speciesId)}</h3>
-                <p>
-                  {USERS.find((u) => u.id === c.userId)?.name} · {formatWhen(c.createdAt)}
-                  {c.lengthCm ? ` · ${c.lengthCm} cm` : ''}
-                </p>
-                <p>
-                  {c.weather.tempC}° · {c.weather.windMs} m/s · {c.weather.pressureHpa} hPa
-                  {c.weather.waterTempC != null ? ` · vesi ${c.weather.waterTempC}°` : ''}
-                </p>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  style={{ minHeight: 34, marginTop: 8, padding: '0 12px', fontSize: '0.8rem' }}
-                  onClick={() => onShare(c.id)}
-                >
-                  Jaa
-                </button>
-              </div>
-              <span className={`badge ${hint}`}>
-                {hint === 'good' ? 'Haluttu' : hint === 'avoid' ? 'Ei-haluttu' : '—'}
-              </span>
-            </div>
-          )
-        })}
-      </div>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }
 
 function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
   const store = useStore()
-  const dots = useMemo(
-    () =>
-      store.state.catches.map((c, i) => ({
-        id: c.id,
-        left: `${18 + ((c.lng * 1000) % 64)}%`,
-        top: `${20 + ((c.lat * 1000) % 55)}%`,
-        hint: store.areaHint(c.lat, c.lng),
-        label: speciesName(c.speciesId),
-        i,
-      })),
-    [store, speciesName],
-  )
 
   return (
     <section className="screen">
@@ -539,20 +613,17 @@ function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
         <h1>Kartta</h1>
       </div>
       <p className="muted" style={{ marginTop: 0 }}>
-        ~300 m alueet: vihreä = haluttua saalista, punainen = ei-haluttua (omat asetukset).
+        OpenStreetMap · vihreä = haluttua saalista, punainen = ei-haluttua (omat asetukset).
       </p>
-      <div className="map-panel">
-        {store.state.session.active && store.state.session.points.length > 1 && (
-          <div className="route-line" aria-hidden />
-        )}
-        {dots.map((d) => (
-          <span
-            key={d.id}
-            className={`map-dot ${d.hint}`}
-            style={{ left: d.left, top: d.top }}
-            title={d.label}
-          />
-        ))}
+      <div className="map-panel map-panel-live">
+        <CatchMap
+          catches={store.state.catches}
+          areaHint={store.areaHint}
+          center={store.lastFix}
+          routePoints={
+            store.state.session.active ? store.state.session.points : undefined
+          }
+        />
       </div>
       {store.state.session.points.length > 0 && (
         <p className="muted" style={{ fontSize: '0.85rem' }}>
@@ -567,24 +638,34 @@ function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
       <div className="section-title" style={{ marginTop: 18 }}>
         <h2>Aluevinkit</h2>
       </div>
-      <div className="stack">
-        {store.state.catches.slice(0, 4).map((c) => {
-          const hint = store.areaHint(c.lat, c.lng)
-          return (
-            <div key={c.id} className="day-row glass">
-              <div>
-                <strong>{speciesName(c.speciesId)}</strong>
-                <div className="muted" style={{ fontSize: '0.82rem' }}>
-                  {c.lat.toFixed(3)}, {c.lng.toFixed(3)}
+      {store.state.catches.length === 0 ? (
+        <p className="muted" style={{ margin: 0 }}>
+          Ei saaliita kartalla vielä.
+        </p>
+      ) : (
+        <div className="stack">
+          {store.state.catches.slice(0, 4).map((c) => {
+            const hint = store.areaHint(c.lat, c.lng)
+            return (
+              <div key={c.id} className="day-row glass">
+                <div>
+                  <strong>{speciesName(c.speciesId)}</strong>
+                  <div className="muted" style={{ fontSize: '0.82rem' }}>
+                    {c.lat.toFixed(3)}, {c.lng.toFixed(3)}
+                  </div>
                 </div>
+                <span className={`badge ${hint}`}>
+                  {hint === 'good'
+                    ? 'Suositeltu'
+                    : hint === 'avoid'
+                      ? 'Vältä'
+                      : 'Neutraali'}
+                </span>
               </div>
-              <span className={`badge ${hint}`}>
-                {hint === 'good' ? 'Suositeltu' : hint === 'avoid' ? 'Vältä' : 'Neutraali'}
-              </span>
-            </div>
-          )
-        })}
-      </div>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }
@@ -723,13 +804,17 @@ function SettingsScreen({ onLogout }: { onLogout: () => void }) {
         </button>
       </div>
 
+      <p className="muted" style={{ marginTop: 18, fontSize: '0.85rem' }}>
+        Olet kirjautuneena omana profiilinasi. Uloskirjautuminen vaatii PIN:n
+        uudelleen — toisen profiilia ei voi avata ilman hänen koodiaan.
+      </p>
       <button
         type="button"
         className="btn btn-danger btn-block"
-        style={{ marginTop: 18 }}
+        style={{ marginTop: 10 }}
         onClick={onLogout}
       >
-        Vaihda käyttäjää
+        Kirjaudu ulos
       </button>
     </section>
   )

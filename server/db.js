@@ -82,4 +82,9 @@ const insertSpecies = db.prepare(
 )
 for (const s of seedSpecies) insertSpecies.run(...s)
 
+// Poista vanhat demosaaliit / testisaaliit jos niitä on vielä kannassa
+db.prepare(
+  `DELETE FROM catches WHERE id IN ('c1','c2','c3','c-test-1') OR note = 'UI-demo'`,
+).run()
+
 export default db
