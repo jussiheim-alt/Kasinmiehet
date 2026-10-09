@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { CatchMap } from './components/CatchMap'
 import { formatDuration, formatWhen, USERS } from './data'
 import { apiGet } from './lib/api'
+import { fishMarkerSvg, speciesColor } from './lib/speciesStyle'
 import { useStore } from './store'
 import type { Screen } from './types'
 
@@ -575,6 +576,13 @@ function CatchesList({
 
 function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
   const store = useStore()
+  const legendSpecies = store.species.filter((s) =>
+    store.state.catches.some((c) => c.speciesId === s.id),
+  )
+  const legendList =
+    legendSpecies.length > 0
+      ? legendSpecies
+      : store.species.slice(0, 6)
 
   return (
     <section className="screen">
@@ -582,7 +590,8 @@ function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
         <h1>Kartta</h1>
       </div>
       <p className="muted" style={{ marginTop: 0 }}>
-        OpenStreetMap · vihreä = haluttua saalista, punainen = ei-haluttua (omat asetukset).
+        Kalastuskartta: SYKE:n syvyyskäyrät + saaliit kalasymboleina lajin värillä.
+        Kerrokset voi vaihtaa kartan vasemmasta yläkulmasta.
       </p>
       <div className="map-panel map-panel-live">
         <CatchMap
@@ -592,7 +601,27 @@ function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
           routePoints={
             store.state.session.active ? store.state.session.points : undefined
           }
+          speciesName={speciesName}
         />
+      </div>
+      <div className="map-legend glass">
+        <strong>Lajit kartalla</strong>
+        <div className="map-legend-rows">
+          {legendList.map((s) => (
+            <div key={s.id} className="map-legend-row">
+              <span
+                className="map-legend-fish"
+                dangerouslySetInnerHTML={{
+                  __html: fishMarkerSvg(speciesColor(s.id), 22),
+                }}
+              />
+              <span>{s.name}</span>
+            </div>
+          ))}
+        </div>
+        <p className="muted" style={{ margin: '8px 0 0', fontSize: '0.75rem' }}>
+          Syvyysaineisto © SYKE (CC BY 4.0). Kaikilla järvillä ei ole luotausta.
+        </p>
       </div>
       {store.state.session.points.length > 0 && (
         <p className="muted" style={{ fontSize: '0.85rem' }}>

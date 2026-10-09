@@ -582,6 +582,7 @@ img {
 .map-panel-live {
   background: #0b1a22;
   padding: 0;
+  height: min(52dvh, 420px);
 }
 
 .leaflet-map {
@@ -594,6 +595,62 @@ img {
 .leaflet-container {
   font: inherit;
   background: #0b1a22;
+}
+
+.fish-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.fish-marker-inner {
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+  line-height: 0;
+}
+
+.map-legend {
+  margin-top: 12px;
+  padding: 12px 14px;
+}
+
+.map-legend strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+}
+
+.map-legend-rows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+
+.map-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.map-legend-fish {
+  display: grid;
+  place-items: center;
+  line-height: 0;
+  flex: 0 0 auto;
+}
+
+.leaflet-control-layers {
+  background: rgba(8, 18, 28, 0.92) !important;
+  color: var(--text);
+  border: 1px solid var(--stroke) !important;
+  border-radius: 12px !important;
+}
+
+.leaflet-control-layers-toggle {
+  background-color: rgba(8, 18, 28, 0.92) !important;
+}
+
+.leaflet-control-layers label {
+  color: var(--text);
 }
 
 .map-dot {
