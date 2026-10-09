@@ -54,19 +54,9 @@ Taustareitti: `@capacitor-community/background-geolocation`. iOS:n Info.plist si
 
 ## Ominaisuudet
 
-- PIN-kirjautuminen per käyttäjä (ei voi avata toisen profiilia ilman PIN:iä)
+- Käyttäjävalinta: Olli / Matti / Jussi (ei PIN-suojausta)
 - Jaettu backend (saaliit, sessiot, kalenteri, lajipreferenssit)
 - OpenStreetMap-kartta + Overpass/Photon -vesistömaski
 - Open-Meteo-ilmasää + **SYKE / ympäristö.fi** pintaveden lämpötila (lähin havaintopaikka)
 - Saaliiden / lähtöjen jako
 - Capacitor Android + iOS -kuoret
-
-### Oletus-PIN:it (vaihda tuotannossa envillä)
-
-| Käyttäjä | PIN |
-|---|---|
-| Olli | `4821` |
-| Matti | `5739` |
-| Jussi | `6942` |
-
-Renderissä voit asettaa `PIN_OLLI`, `PIN_MATTI`, `PIN_JUSSI` ennen ensimmäistä käynnistystä.

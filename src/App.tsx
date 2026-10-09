@@ -94,11 +94,7 @@ export default function App() {
       <div className="app-shell">
         <div className="app-bg" aria-hidden />
         <div className="app-frame">
-          <Login
-            onLogin={async (id, pin) => {
-              await store.login(id, pin)
-            }}
-          />
+          <Login onPick={(id) => store.login(id)} />
         </div>
       </div>
     )
@@ -161,11 +157,7 @@ export default function App() {
           />
         )}
         {screen === 'settings' && (
-          <SettingsScreen
-            onLogout={() => {
-              void store.logout()
-            }}
-          />
+          <SettingsScreen onLogout={() => store.logout()} />
         )}
 
         <nav className="nav" aria-label="Päänavigaatio">
@@ -233,16 +225,7 @@ export default function App() {
   )
 }
 
-function Login({
-  onLogin,
-}: {
-  onLogin: (id: 'olli' | 'matti' | 'jussi', pin: string) => Promise<void>
-}) {
-  const [userId, setUserId] = useState<'olli' | 'matti' | 'jussi' | ''>('')
-  const [pin, setPin] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
+function Login({ onPick }: { onPick: (id: 'olli' | 'matti' | 'jussi') => void }) {
   return (
     <section className="screen login-screen">
       <div className="eyebrow">Yksityinen ryhmäappi</div>
@@ -252,63 +235,26 @@ function Login({
         <span>miehet</span>
       </h1>
       <p className="lede">
-        Kirjaudu omalla PIN-koodilla. Toisen profiilia ei voi avata ilman hänen
-        koodiaan.
+        Saaliit, reitit ja kalastuspäivät — Olli, Matti ja Jussi samassa veneessä.
       </p>
-
-      <div className="glass" style={{ padding: 16, marginTop: 22 }}>
-        <div className="field">
-          <label htmlFor="who">Oma profiili</label>
-          <select
-            id="who"
-            value={userId}
-            onChange={(e) => setUserId(e.target.value as typeof userId)}
+      <div className="user-grid">
+        {USERS.map((u) => (
+          <button
+            key={u.id}
+            type="button"
+            className="user-chip"
+            onClick={() => onPick(u.id)}
           >
-            <option value="">Valitse…</option>
-            {USERS.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="pin">PIN</label>
-          <input
-            id="pin"
-            type="password"
-            inputMode="numeric"
-            autoComplete="current-password"
-            placeholder="••••"
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-          />
-        </div>
-        {error && (
-          <p style={{ color: '#fecdd3', margin: '0 0 12px', fontSize: '0.9rem' }}>
-            {error}
-          </p>
-        )}
-        <button
-          type="button"
-          className="btn btn-primary btn-block"
-          disabled={busy}
-          onClick={() => {
-            if (!userId || !pin) {
-              setError('Valitse profiili ja anna PIN')
-              return
-            }
-            setBusy(true)
-            setError(null)
-            void onLogin(userId, pin)
-              .catch((err: unknown) => {
-                setError(err instanceof Error ? err.message : 'Kirjautuminen epäonnistui')
-              })
-              .finally(() => setBusy(false))
-          }}
-        >
-          {busy ? 'Kirjaudutaan…' : 'Kirjaudu'}
-        </button>
+            <span className="avatar">{u.initials}</span>
+            <span>
+              <strong>{u.name}</strong>
+              <br />
+              <span className="muted" style={{ fontSize: '0.85rem' }}>
+                Jatka käyttäjänä
+              </span>
+            </span>
+          </button>
+        ))}
       </div>
     </section>
   )
@@ -814,17 +760,13 @@ function SettingsScreen({ onLogout }: { onLogout: () => void }) {
         </button>
       </div>
 
-      <p className="muted" style={{ marginTop: 18, fontSize: '0.85rem' }}>
-        Olet kirjautuneena omana profiilinasi. Uloskirjautuminen vaatii PIN:n
-        uudelleen — toisen profiilia ei voi avata ilman hänen koodiaan.
-      </p>
       <button
         type="button"
         className="btn btn-danger btn-block"
-        style={{ marginTop: 10 }}
+        style={{ marginTop: 18 }}
         onClick={onLogout}
       >
-        Kirjaudu ulos
+        Vaihda käyttäjää
       </button>
     </section>
   )

@@ -9,13 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { DEMO_WEATHER, SEED_SPECIES, USERS } from './data'
-import {
-  apiGet,
-  apiPostJson,
-  apiSend,
-  getToken,
-  setToken,
-} from './lib/api'
+import { apiGet, apiSend } from './lib/api'
 import {
   getCurrentPosition,
   startRouteTracking,
@@ -32,7 +26,7 @@ import type {
   WeatherSnapshot,
 } from './types'
 
-const STORAGE_KEY = 'kasinmiehet-v3'
+const STORAGE_KEY = 'kasinmiehet-v4'
 
 function emptyUndesired(): Record<UserId, string[]> {
   return { olli: [], matti: [], jussi: [] }
@@ -55,8 +49,6 @@ function loadState(): AppState {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as AppState
-      // Älä palauta vanhaa kirjautumista ilman tokenia
-      if (!getToken()) parsed.currentUserId = null
       parsed.catches = Array.isArray(parsed.catches) ? parsed.catches : []
       parsed.fishingDays = Array.isArray(parsed.fishingDays)
         ? parsed.fishingDays
@@ -85,8 +77,8 @@ interface StoreApi {
   trackingMode: 'native-background' | 'web' | 'none' | null
   lastFix: { lat: number; lng: number } | null
   apiOnline: boolean | null
-  login: (id: UserId, pin: string) => Promise<void>
-  logout: () => Promise<void>
+  login: (id: UserId) => void
+  logout: () => void
   startSession: () => Promise<'native-background' | 'web' | 'none'>
   stopSession: () => Promise<void>
   addCatch: (input: {
@@ -173,22 +165,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    void (async () => {
-      const token = getToken()
-      if (!token) return
-      try {
-        const me = await apiGet<{ userId: UserId; name: string }>('/api/me')
-        setState((s) => ({ ...s, currentUserId: me.userId }))
-        setApiOnline(true)
-      } catch {
-        setToken(null)
-        setState((s) => ({ ...s, currentUserId: null }))
-      }
-    })()
-  }, [])
-
-  useEffect(() => {
-    if (!state.currentUserId) return
     void syncBootstrap(state.currentUserId)
   }, [state.currentUserId, syncBootstrap])
 
@@ -323,32 +299,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     trackingMode,
     lastFix,
     apiOnline,
-    login: async (id, pin) => {
-      const result = await apiPostJson<{
-        token: string
-        userId: UserId
-        name: string
-      }>('/api/login', { userId: id, pin })
-      setToken(result.token)
-      setState((s) => ({
-        ...s,
-        currentUserId: result.userId,
-        catches: [],
-        fishingDays: [],
-        session: { active: false, startedAt: null, points: [] },
-      }))
-      setApiOnline(true)
-      await syncBootstrap(result.userId)
-    },
-    logout: async () => {
-      try {
-        await apiSend('/api/logout', 'POST', {})
-      } catch {
-        /* ignore */
-      }
-      setToken(null)
-      setState(emptyState())
-    },
+    login: (id) => setState((s) => ({ ...s, currentUserId: id })),
+    logout: () => setState(emptyState()),
     startSession: beginTracking,
     stopSession,
     addCatch: async (input) => {

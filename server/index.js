@@ -3,7 +3,6 @@ import express from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { authMiddleware, loginWithPin, logoutToken } from './auth.js'
 import db from './db.js'
 import { fetchNearestWaterTemp } from './waterTemp.js'
 
@@ -14,29 +13,9 @@ const distDir = path.join(__dirname, '..', 'dist')
 
 app.use(cors())
 app.use(express.json({ limit: '2mb' }))
-app.use(authMiddleware)
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'kasinmiehet' })
-})
-
-app.post('/api/login', (req, res) => {
-  const userId = String(req.body?.userId || '')
-  const pin = String(req.body?.pin || '')
-  if (!userId || !pin) return res.status(400).json({ error: 'userId and pin required' })
-  const result = loginWithPin(userId, pin)
-  if (!result) return res.status(401).json({ error: 'Väärä käyttäjä tai PIN' })
-  res.json(result)
-})
-
-app.post('/api/logout', (req, res) => {
-  logoutToken(req.authToken)
-  res.json({ ok: true })
-})
-
-app.get('/api/me', (req, res) => {
-  if (!req.auth) return res.status(401).json({ error: 'unauthorized' })
-  res.json(req.auth)
 })
 
 app.get('/api/bootstrap', (req, res) => {
