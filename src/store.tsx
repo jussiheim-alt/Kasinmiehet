@@ -1,12 +1,22 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
 import { DEMO_CATCHES, DEMO_DAYS, DEMO_WEATHER, SEED_SPECIES, USERS } from './data'
+import {
+  getCurrentPosition,
+  looksNearWater,
+  startRouteTracking,
+  stopRouteTracking,
+} from './lib/geo'
+import { shareText } from './lib/share'
+import { fetchWeather } from './lib/weather'
 import type {
   AppState,
   CatchRecord,
@@ -44,22 +54,27 @@ interface StoreApi {
   users: typeof USERS
   species: Species[]
   weather: WeatherSnapshot
+  trackingMode: 'native-background' | 'web' | 'none' | null
+  lastFix: { lat: number; lng: number } | null
   login: (id: UserId) => void
   logout: () => void
-  startSession: () => void
-  stopSession: () => void
+  startSession: () => Promise<'native-background' | 'web' | 'none'>
+  stopSession: () => Promise<void>
   addCatch: (input: {
     speciesId: string
     lengthCm?: number
     note?: string
     lat?: number
     lng?: number
-  }) => void
+  }) => Promise<void>
   toggleUndesired: (speciesId: string) => void
   addSpecies: (name: string) => void
   addFishingDay: (date: string, title: string) => void
-  sendDeparture: () => string
-  recordWaterPrompt: (accepted: boolean) => void
+  sendDeparture: () => Promise<string>
+  shareCatch: (catchId: string) => Promise<boolean>
+  recordWaterPrompt: (accepted: boolean) => Promise<void>
+  refreshWeather: () => Promise<void>
+  checkWaterPrompt: () => Promise<boolean>
   waterPromptsLeft: number
   isUndesired: (speciesId: string) => boolean
   areaHint: (lat: number, lng: number) => 'good' | 'avoid' | 'neutral'
@@ -69,6 +84,12 @@ const StoreContext = createContext<StoreApi | null>(null)
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(loadState)
+  const [weather, setWeather] = useState<WeatherSnapshot>(DEMO_WEATHER)
+  const [trackingMode, setTrackingMode] = useState<
+    'native-background' | 'web' | 'none' | null
+  >(null)
+  const [lastFix, setLastFix] = useState<{ lat: number; lng: number } | null>(null)
+  const startingRef = useRef(false)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
@@ -90,14 +111,52 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(promptsUsedKey, String(promptsUsed))
   }, [promptsUsed, promptsUsedKey])
 
-  const api: StoreApi = {
-    state,
-    users: USERS,
-    species,
-    weather: DEMO_WEATHER,
-    login: (id) => setState((s) => ({ ...s, currentUserId: id })),
-    logout: () => setState((s) => ({ ...s, currentUserId: null })),
-    startSession: () =>
+  const appendPoint = useCallback((lat: number, lng: number, t: string) => {
+    setLastFix({ lat, lng })
+    setState((s) => {
+      if (!s.session.active) return s
+      const last = s.session.points[s.session.points.length - 1]
+      if (last && Math.hypot(last.lat - lat, last.lng - lng) < 0.00005) return s
+      return {
+        ...s,
+        session: {
+          ...s.session,
+          points: [...s.session.points, { lat, lng, t }],
+        },
+      }
+    })
+  }, [])
+
+  const refreshWeather = useCallback(async () => {
+    const fix = lastFix ?? (await getCurrentPosition())
+    const lat = fix?.lat ?? 60.17
+    const lng = fix?.lng ?? 24.94
+    if (fix && 'lat' in fix) setLastFix({ lat: fix.lat, lng: fix.lng })
+    const w = await fetchWeather(lat, lng)
+    setWeather(w)
+  }, [lastFix])
+
+  useEffect(() => {
+    void (async () => {
+      const fix = await getCurrentPosition()
+      const lat = fix?.lat ?? 60.17
+      const lng = fix?.lng ?? 24.94
+      if (fix) setLastFix({ lat: fix.lat, lng: fix.lng })
+      setWeather(await fetchWeather(lat, lng))
+    })()
+  }, [])
+
+  const beginTracking = useCallback(async () => {
+    if (startingRef.current) return 'none' as const
+    startingRef.current = true
+    try {
+      const fix = await getCurrentPosition()
+      const startPoint = fix ?? {
+        lat: 60.214,
+        lng: 25.032,
+        t: new Date().toISOString(),
+      }
+      setLastFix({ lat: startPoint.lat, lng: startPoint.lng })
       setState((s) => ({
         ...s,
         session: {
@@ -105,30 +164,64 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           startedAt: new Date().toISOString(),
           points: [
             {
-              lat: 60.214,
-              lng: 25.032,
-              t: new Date().toISOString(),
+              lat: startPoint.lat,
+              lng: startPoint.lng,
+              t: startPoint.t ?? new Date().toISOString(),
             },
           ],
         },
-      })),
-    stopSession: () =>
-      setState((s) => ({
-        ...s,
-        session: { active: false, startedAt: null, points: s.session.points },
-      })),
-    addCatch: (input) => {
+      }))
+      void fetchWeather(startPoint.lat, startPoint.lng).then(setWeather)
+
+      const result = await startRouteTracking((p) => {
+        appendPoint(p.lat, p.lng, p.t)
+      })
+      const mode = result.mode === 'none' ? 'none' : result.mode
+      setTrackingMode(mode)
+      return mode
+    } finally {
+      startingRef.current = false
+    }
+  }, [appendPoint])
+
+  const stopSession = useCallback(async () => {
+    await stopRouteTracking()
+    setTrackingMode(null)
+    setState((s) => ({
+      ...s,
+      session: { active: false, startedAt: null, points: s.session.points },
+    }))
+  }, [])
+
+  const api: StoreApi = {
+    state,
+    users: USERS,
+    species,
+    weather,
+    trackingMode,
+    lastFix,
+    login: (id) => setState((s) => ({ ...s, currentUserId: id })),
+    logout: () => setState((s) => ({ ...s, currentUserId: null })),
+    startSession: beginTracking,
+    stopSession,
+    addCatch: async (input) => {
       if (!state.currentUserId) return
+      const fix = lastFix ?? (await getCurrentPosition())
+      const w = await fetchWeather(
+        fix?.lat ?? 60.214,
+        fix?.lng ?? 25.032,
+      )
+      setWeather(w)
       const record: CatchRecord = {
         id: `c-${Date.now()}`,
         userId: state.currentUserId,
         speciesId: input.speciesId,
-        lat: input.lat ?? 60.214 + Math.random() * 0.01,
-        lng: input.lng ?? 25.032 + Math.random() * 0.01,
+        lat: input.lat ?? fix?.lat ?? 60.214 + Math.random() * 0.01,
+        lng: input.lng ?? fix?.lng ?? 25.032 + Math.random() * 0.01,
         createdAt: new Date().toISOString(),
         lengthCm: input.lengthCm,
         note: input.note,
-        weather: { ...DEMO_WEATHER },
+        weather: w,
       }
       setState((s) => ({ ...s, catches: [record, ...s.catches] }))
     },
@@ -155,7 +248,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .replace(/[^a-zäöå0-9-]/gi, '')
       setState((s) => ({
         ...s,
-        customSpecies: [...s.customSpecies, { id: `${id}-${Date.now()}`, name: trimmed }],
+        customSpecies: [
+          ...s.customSpecies,
+          { id: `${id}-${Date.now()}`, name: trimmed },
+        ],
       }))
     },
     addFishingDay: (date, title) => {
@@ -172,22 +268,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         ],
       }))
     },
-    sendDeparture: () => {
-      const name = USERS.find((u) => u.id === state.currentUserId)?.name ?? 'Kaikki'
-      return `${name} lähtee kalastamaan`
+    sendDeparture: async () => {
+      const name =
+        USERS.find((u) => u.id === state.currentUserId)?.name ?? 'Kaikki'
+      const text = `${name} lähtee kalastamaan — Kasinmiehet`
+      await shareText('Lähtöilmoitus', text)
+      return text
     },
-    recordWaterPrompt: (accepted) => {
+    shareCatch: async (catchId) => {
+      const c = state.catches.find((x) => x.id === catchId)
+      if (!c) return false
+      const name = species.find((s) => s.id === c.speciesId)?.name ?? c.speciesId
+      const angler = USERS.find((u) => u.id === c.userId)?.name ?? ''
+      const text = [
+        `Saalis: ${name}`,
+        c.lengthCm ? `Pituus: ${c.lengthCm} cm` : null,
+        `Kalastaja: ${angler}`,
+        `Sijainti: ${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}`,
+        `Sää: ${c.weather.tempC}°, tuuli ${c.weather.windMs} m/s ${c.weather.windDir}`,
+        '— Kasinmiehet',
+      ]
+        .filter(Boolean)
+        .join('\n')
+      return shareText('Saalis', text)
+    },
+    recordWaterPrompt: async (accepted) => {
       setPromptsUsed((n) => Math.min(2, n + 1))
-      if (accepted) {
-        setState((s) => ({
-          ...s,
-          session: {
-            active: true,
-            startedAt: new Date().toISOString(),
-            points: [{ lat: 60.214, lng: 25.032, t: new Date().toISOString() }],
-          },
-        }))
-      }
+      if (accepted) await beginTracking()
+    },
+    refreshWeather,
+    checkWaterPrompt: async () => {
+      if (promptsUsed >= 2 || state.session.active) return false
+      const fix = await getCurrentPosition()
+      if (!fix) return true // demo: still allow prompt without GPS
+      setLastFix({ lat: fix.lat, lng: fix.lng })
+      return looksNearWater(fix.lat, fix.lng)
     },
     waterPromptsLeft: Math.max(0, 2 - promptsUsed),
     isUndesired: (speciesId) => {

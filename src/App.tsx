@@ -67,9 +67,17 @@ export default function App() {
     }
     if (!store.state.currentUserId || store.state.session.active) return
     if (store.waterPromptsLeft <= 0) return
-    const t = window.setTimeout(() => setShowWaterPrompt(true), 2200)
-    return () => window.clearTimeout(t)
-  }, [screen, store.state.currentUserId, store.state.session.active, store.waterPromptsLeft])
+    let cancelled = false
+    const t = window.setTimeout(() => {
+      void store.checkWaterPrompt().then((near) => {
+        if (!cancelled && near) setShowWaterPrompt(true)
+      })
+    }, 2200)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [screen, store.state.currentUserId, store.state.session.active, store.waterPromptsLeft, store])
 
   useEffect(() => {
     if (!toast) return
@@ -101,14 +109,22 @@ export default function App() {
             onCatch={() => setScreen('catch')}
             onCatches={() => setScreen('catches')}
             onStart={() => {
-              store.startSession()
-              setToast('Kalastus käynnissä — reitti tallentuu')
+              void store.startSession().then((mode) => {
+                setToast(
+                  mode === 'native-background'
+                    ? 'Kalastus käynnissä — taustareitti'
+                    : mode === 'web'
+                      ? 'Kalastus käynnissä — GPS-reitti'
+                      : 'Kalastus käynnissä',
+                )
+              })
             }}
             onStop={() => {
-              store.stopSession()
-              setToast('Kalastus päättyi')
+              void store.stopSession().then(() => setToast('Kalastus päättyi'))
             }}
-            onDeparture={() => setToast(store.sendDeparture())}
+            onDeparture={() => {
+              void store.sendDeparture().then((msg) => setToast(msg))
+            }}
           />
         )}
         {screen === 'catch' && (
@@ -120,12 +136,23 @@ export default function App() {
             }}
           />
         )}
-        {screen === 'catches' && <CatchesList speciesName={speciesName} />}
+        {screen === 'catches' && (
+          <CatchesList
+            speciesName={speciesName}
+            onShare={(id) => {
+              void store.shareCatch(id).then((ok) =>
+                setToast(ok ? 'Saalis jaettu' : 'Jakaminen epäonnistui'),
+              )
+            }}
+          />
+        )}
         {screen === 'map' && <MapScreen speciesName={speciesName} />}
         {screen === 'calendar' && (
           <CalendarScreen
             onNotify={() => setToast('Muistutus asetettu')}
-            onDeparture={() => setToast(store.sendDeparture())}
+            onDeparture={() => {
+              void store.sendDeparture().then((msg) => setToast(msg))
+            }}
           />
         )}
         {screen === 'settings' && (
@@ -167,9 +194,10 @@ export default function App() {
                   type="button"
                   className="btn btn-primary btn-block"
                   onClick={() => {
-                    store.recordWaterPrompt(true)
-                    setShowWaterPrompt(false)
-                    setToast('Kalastus käynnissä')
+                    void store.recordWaterPrompt(true).then(() => {
+                      setShowWaterPrompt(false)
+                      setToast('Kalastus käynnissä')
+                    })
                   }}
                 >
                   Kyllä, aloita
@@ -178,8 +206,9 @@ export default function App() {
                   type="button"
                   className="btn btn-ghost btn-block"
                   onClick={() => {
-                    store.recordWaterPrompt(false)
-                    setShowWaterPrompt(false)
+                    void store.recordWaterPrompt(false).then(() =>
+                      setShowWaterPrompt(false),
+                    )
                   }}
                 >
                   Ei nyt
@@ -286,7 +315,16 @@ function Home({
             <div>
               <strong>Kalastus käynnissä</strong>
               <div className="muted" style={{ fontSize: '0.85rem' }}>
-                {formatDuration(store.state.session.startedAt)} · reitti tallentuu
+                {formatDuration(store.state.session.startedAt)} ·{' '}
+                {store.state.session.points.length} pistettä
+                {store.trackingMode === 'native-background'
+                  ? ' · tausta'
+                  : store.trackingMode === 'web'
+                    ? ' · GPS'
+                    : ''}
+                {store.lastFix
+                  ? ` · ${store.lastFix.lat.toFixed(3)}, ${store.lastFix.lng.toFixed(3)}`
+                  : ''}
               </div>
             </div>
           </div>
@@ -409,12 +447,13 @@ function CatchForm({ onBack, onSaved }: { onBack: () => void; onSaved: () => voi
         type="button"
         className="btn btn-primary btn-block"
         onClick={() => {
-          store.addCatch({
-            speciesId,
-            lengthCm: lengthCm ? Number(lengthCm) : undefined,
-            note: note || undefined,
-          })
-          onSaved()
+          void store
+            .addCatch({
+              speciesId,
+              lengthCm: lengthCm ? Number(lengthCm) : undefined,
+              note: note || undefined,
+            })
+            .then(onSaved)
         }}
       >
         Tallenna saalis
@@ -423,7 +462,13 @@ function CatchForm({ onBack, onSaved }: { onBack: () => void; onSaved: () => voi
   )
 }
 
-function CatchesList({ speciesName }: { speciesName: (id: string) => string }) {
+function CatchesList({
+  speciesName,
+  onShare,
+}: {
+  speciesName: (id: string) => string
+  onShare: (id: string) => void
+}) {
   const store = useStore()
   return (
     <section className="screen">
@@ -448,6 +493,14 @@ function CatchesList({ speciesName }: { speciesName: (id: string) => string }) {
                   {c.weather.tempC}° · {c.weather.windMs} m/s · {c.weather.pressureHpa} hPa
                   {c.weather.waterTempC != null ? ` · vesi ${c.weather.waterTempC}°` : ''}
                 </p>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ minHeight: 34, marginTop: 8, padding: '0 12px', fontSize: '0.8rem' }}
+                  onClick={() => onShare(c.id)}
+                >
+                  Jaa
+                </button>
               </div>
               <span className={`badge ${hint}`}>
                 {hint === 'good' ? 'Haluttu' : hint === 'avoid' ? 'Ei-haluttu' : '—'}
@@ -484,7 +537,9 @@ function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
         ~300 m alueet: vihreä = haluttua saalista, punainen = ei-haluttua (omat asetukset).
       </p>
       <div className="map-panel">
-        {store.state.session.active && <div className="route-line" aria-hidden />}
+        {store.state.session.active && store.state.session.points.length > 1 && (
+          <div className="route-line" aria-hidden />
+        )}
         {dots.map((d) => (
           <span
             key={d.id}
@@ -494,6 +549,16 @@ function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
           />
         ))}
       </div>
+      {store.state.session.points.length > 0 && (
+        <p className="muted" style={{ fontSize: '0.85rem' }}>
+          Viimeisin reitti: {store.state.session.points.length} GPS-pistettä
+          {store.trackingMode === 'native-background'
+            ? ' (natiivi tausta)'
+            : store.trackingMode === 'web'
+              ? ' (selain)'
+              : ''}
+        </p>
+      )}
       <div className="section-title" style={{ marginTop: 18 }}>
         <h2>Aluevinkit</h2>
       </div>
