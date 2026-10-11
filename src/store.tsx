@@ -214,7 +214,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setState((s) => {
       if (!s.session.active) return s
       const last = s.session.points[s.session.points.length - 1]
-      if (last && Math.hypot(last.lat - lat, last.lng - lng) < 0.00005) return s
+      // ~5 m kynnys — tiheämpi track plotteria varten
+      if (last && Math.hypot(last.lat - lat, last.lng - lng) < 0.000045) return s
       const points = [
         ...s.session.points,
         { lat, lng, t, userId: uid ?? undefined },
@@ -584,6 +585,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         participants: (state.currentUserId ? [state.currentUserId] : []) as UserId[],
         mapVisible: false,
         routePoints: [],
+        routeTracks: [],
       }
       setState((s) => ({
         ...s,

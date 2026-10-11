@@ -105,22 +105,58 @@ export function dateKeyHelsinki(isoOrDate) {
   }).format(d)
 }
 
-/** Tallentaa päättyneen session reitin kalastuspäivälle (luo päivän tarvittaessa). */
+function readTracks(row) {
+  try {
+    const tracks = JSON.parse(row.route_tracks_json || '[]')
+    if (Array.isArray(tracks) && tracks.length) return tracks
+  } catch {
+    /* ignore */
+  }
+  // Vanha flat-lista → yksi track
+  try {
+    const points = JSON.parse(row.route_points_json || '[]')
+    if (points.length) {
+      return [{ id: `legacy-${row.id}`, points }]
+    }
+  } catch {
+    /* ignore */
+  }
+  return []
+}
+
+function flattenTracks(tracks) {
+  const all = []
+  for (const t of tracks || []) {
+    for (const p of t.points || []) all.push(p)
+  }
+  return mergePoints([], all)
+}
+
+/** Tallentaa päättyneen session reitin omana trackina (ei sekoita eri reittejä). */
 export function saveRouteToFishingDay({
   date,
   points,
   participants = [],
   title,
   mapVisible = true,
+  trackId,
+  userId,
 }) {
   const existing = db
     .prepare(`SELECT * FROM fishing_days WHERE date = ? ORDER BY id LIMIT 1`)
     .get(date)
 
-  const mergedPoints = mergePoints(
-    existing ? JSON.parse(existing.route_points_json || '[]') : [],
-    points || [],
-  )
+  const cleanPoints = mergePoints([], points || [])
+  if (!cleanPoints.length) {
+    return existing?.id ?? null
+  }
+
+  const newTrack = {
+    id: trackId || `tr-${Date.now()}`,
+    userId: userId || cleanPoints[0]?.userId || null,
+    points: cleanPoints,
+  }
+
   const mergedParticipants = [
     ...new Set([
       ...(existing ? JSON.parse(existing.participants_json || '[]') : []),
@@ -129,14 +165,28 @@ export function saveRouteToFishingDay({
   ]
 
   if (existing) {
+    const tracks = readTracks(existing)
+    const idx = tracks.findIndex((t) => t.id === newTrack.id)
+    if (idx >= 0) {
+      tracks[idx] = {
+        ...tracks[idx],
+        points: mergePoints(tracks[idx].points || [], newTrack.points),
+        userId: newTrack.userId || tracks[idx].userId,
+      }
+    } else {
+      tracks.push(newTrack)
+    }
+    const flat = flattenTracks(tracks)
     db.prepare(
       `UPDATE fishing_days
-       SET route_points_json = ?,
+       SET route_tracks_json = ?,
+           route_points_json = ?,
            participants_json = ?,
            map_visible = CASE WHEN ? = 1 THEN 1 ELSE map_visible END
        WHERE id = ?`,
     ).run(
-      JSON.stringify(mergedPoints),
+      JSON.stringify(tracks),
+      JSON.stringify(flat),
       JSON.stringify(mergedParticipants),
       mapVisible ? 1 : 0,
       existing.id,
@@ -147,15 +197,16 @@ export function saveRouteToFishingDay({
   const id = `d-${date}-${Date.now()}`
   db.prepare(
     `INSERT INTO fishing_days
-      (id, date, title, participants_json, map_visible, route_points_json)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+      (id, date, title, participants_json, map_visible, route_points_json, route_tracks_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     date,
     title || 'Kalastuspäivä',
     JSON.stringify(mergedParticipants),
     mapVisible ? 1 : 0,
-    JSON.stringify(mergedPoints),
+    JSON.stringify(cleanPoints),
+    JSON.stringify([newTrack]),
   )
   return id
 }
@@ -176,7 +227,61 @@ export function backfillRoutesFromSessions() {
       points: points.map((p) => ({ ...p, userId: p.userId || row.userId })),
       participants: [row.userId],
       mapVisible: false,
+      trackId: `session-${row.id}`,
+      userId: row.userId,
     })
+  }
+}
+
+/** Muunna vanhat flat-reitit trackeiksi + pilko isot hypyt. */
+export function migrateFlatRoutesToTracks() {
+  const rows = db.prepare(`SELECT * FROM fishing_days`).all()
+  for (const row of rows) {
+    let tracks = []
+    try {
+      tracks = JSON.parse(row.route_tracks_json || '[]')
+    } catch {
+      tracks = []
+    }
+    if (tracks.length) continue
+    let points = []
+    try {
+      points = JSON.parse(row.route_points_json || '[]')
+    } catch {
+      points = []
+    }
+    if (!points.length) continue
+
+    // Pilko hyppyjen mukaan erillisiksi trackeiksi
+    const sorted = [...points].sort((a, b) => String(a.t).localeCompare(String(b.t)))
+    const segments = []
+    let cur = [sorted[0]]
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1]
+      const p = sorted[i]
+      const dist =
+        Math.hypot(
+          (p.lat - prev.lat) * 111_320,
+          (p.lng - prev.lng) * 111_320 * Math.cos((prev.lat * Math.PI) / 180),
+        )
+      const dt = Math.abs(new Date(p.t).getTime() - new Date(prev.t).getTime())
+      if (dist > 180 || dt > 8 * 60_000) {
+        if (cur.length >= 2) segments.push(cur)
+        cur = [p]
+      } else {
+        cur.push(p)
+      }
+    }
+    if (cur.length >= 2) segments.push(cur)
+
+    tracks = segments.map((seg, i) => ({
+      id: `migrated-${row.id}-${i}`,
+      userId: seg[0]?.userId || null,
+      points: seg,
+    }))
+    db.prepare(
+      `UPDATE fishing_days SET route_tracks_json = ?, route_points_json = ? WHERE id = ?`,
+    ).run(JSON.stringify(tracks), JSON.stringify(flattenTracks(tracks)), row.id)
   }
 }
 
@@ -205,18 +310,27 @@ export function buildSyncPayload(userId) {
   const fishingDays = db
     .prepare(
       `SELECT id, date, title, participants_json AS participantsJson,
-              map_visible AS mapVisible, route_points_json AS routePointsJson
+              map_visible AS mapVisible, route_points_json AS routePointsJson,
+              route_tracks_json AS routeTracksJson
        FROM fishing_days ORDER BY date DESC`,
     )
     .all()
-    .map((d) => ({
-      id: d.id,
-      date: d.date,
-      title: d.title,
-      participants: JSON.parse(d.participantsJson || '[]'),
-      mapVisible: Boolean(d.mapVisible),
-      routePoints: JSON.parse(d.routePointsJson || '[]'),
-    }))
+    .map((d) => {
+      const tracks = readTracks({
+        id: d.id,
+        route_tracks_json: d.routeTracksJson,
+        route_points_json: d.routePointsJson,
+      })
+      return {
+        id: d.id,
+        date: d.date,
+        title: d.title,
+        participants: JSON.parse(d.participantsJson || '[]'),
+        mapVisible: Boolean(d.mapVisible),
+        routeTracks: tracks,
+        routePoints: flattenTracks(tracks),
+      }
+    })
   const undesired = userId
     ? db
         .prepare(
@@ -240,6 +354,7 @@ export { mergePoints }
 
 // Varmista että vanhat sessioreitit löytyvät kalastuspäiviltä
 try {
+  migrateFlatRoutesToTracks()
   backfillRoutesFromSessions()
 } catch {
   /* ignore backfill errors on boot */

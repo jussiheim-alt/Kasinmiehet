@@ -60,6 +60,13 @@ export interface FishingSession {
   participants?: (UserId | string)[]
 }
 
+export interface RouteTrack {
+  id: string
+  label?: string
+  userId?: string
+  points: RoutePoint[]
+}
+
 export interface FishingDay {
   id: string
   date: string
@@ -67,7 +74,9 @@ export interface FishingDay {
   participants: UserId[]
   /** Näytä reitti kartalla */
   mapVisible?: boolean
-  /** Tallennettu GPS-reitti */
+  /** Tallennetut GPS-reitit (erilliset trackit, ei yksi suora viiva) */
+  routeTracks?: RouteTrack[]
+  /** Flat-lista yhteensopivuuteen / pistelaskuun */
   routePoints?: RoutePoint[]
 }
 

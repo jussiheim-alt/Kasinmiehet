@@ -1,8 +1,9 @@
 import L from 'leaflet'
 import { useEffect, useRef } from 'react'
 import 'leaflet/dist/leaflet.css'
+import { drawPlotterTrack } from '../lib/drawPlotterTrack'
 import { fishMarkerSvg, speciesColor } from '../lib/speciesStyle'
-import type { CatchRecord, RoutePoint } from '../types'
+import type { CatchRecord, RoutePoint, RouteTrack } from '../types'
 
 type Hint = 'good' | 'avoid' | 'neutral'
 
@@ -33,6 +34,7 @@ export type MapRoute = {
   id: string
   label: string
   points: RoutePoint[]
+  tracks?: RouteTrack[]
   color?: string
   live?: boolean
 }
@@ -135,6 +137,7 @@ export function CatchMap({
 
     overlays.clearLayers()
     const bounds: L.LatLngExpression[] = []
+    const routeBounds: L.LatLngExpression[] = []
 
     for (const c of catches) {
       const hint = areaHint(c.lat, c.lng)
@@ -161,23 +164,21 @@ export function CatchMap({
     }
 
     routes.forEach((route, idx) => {
-      if (!route.points || route.points.length < 2) return
       const color = route.color || ROUTE_COLORS[idx % ROUTE_COLORS.length]
-      const latlngs = route.points.map(
-        (p) => [p.lat, p.lng] as L.LatLngExpression,
+      drawPlotterTrack(
+        overlays,
+        {
+          id: route.id,
+          label: route.label,
+          points: route.points,
+          tracks: route.tracks,
+          color,
+          live: route.live,
+        },
+        routeBounds,
       )
-      L.polyline(latlngs, {
-        color,
-        weight: route.live ? 4 : 3,
-        opacity: route.live ? 0.95 : 0.8,
-        dashArray: route.live ? undefined : undefined,
-      })
-        .bindPopup(
-          `<strong>${route.label}</strong><br/>${route.points.length} GPS-pistettä`,
-        )
-        .addTo(overlays)
-      bounds.push(...latlngs)
     })
+    bounds.push(...routeBounds)
 
     if (center) {
       L.circleMarker([center.lat, center.lng], {
@@ -191,12 +192,14 @@ export function CatchMap({
       bounds.push([center.lat, center.lng])
     }
 
-    if (bounds.length) {
-      const fitKey = `${catches.length}:${routes.map((r) => r.id).join(',')}:${center ? 1 : 0}`
+    // Kun reittejä on näkyvissä, zoomataan niihin (ei koko Suomen saaliisiin)
+    const fitTarget = routeBounds.length >= 2 ? routeBounds : bounds
+    if (fitTarget.length) {
+      const fitKey = `${catches.length}:${routes.map((r) => `${r.id}:${r.points.length}`).join(',')}:${center ? 1 : 0}`
       if (fitKey !== lastFitKeyRef.current) {
-        map.fitBounds(L.latLngBounds(bounds), {
-          padding: [28, 28],
-          maxZoom: 13,
+        map.fitBounds(L.latLngBounds(fitTarget), {
+          padding: [36, 36],
+          maxZoom: routeBounds.length ? 15 : 13,
         })
         lastFitKeyRef.current = fitKey
       }

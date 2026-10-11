@@ -215,6 +215,8 @@ app.post('/api/sessions/:id/stop', (req, res) => {
       participants: group.participants || [],
       title: 'Kalastuspäivä',
       mapVisible: true,
+      trackId: group.id ? `session-${group.id}` : `tr-${Date.now()}`,
+      userId: group.startedBy || undefined,
     })
   }
 
@@ -235,8 +237,8 @@ app.post('/api/fishing-days', (req, res) => {
   } else {
     db.prepare(
       `INSERT INTO fishing_days
-        (id, date, title, participants_json, map_visible, route_points_json)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+        (id, date, title, participants_json, map_visible, route_points_json, route_tracks_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       d.id,
       d.date,
@@ -244,6 +246,7 @@ app.post('/api/fishing-days', (req, res) => {
       JSON.stringify(d.participants ?? []),
       d.mapVisible ? 1 : 0,
       JSON.stringify(d.routePoints ?? []),
+      JSON.stringify(d.routeTracks ?? []),
     )
   }
   const revision = bumpRevision()

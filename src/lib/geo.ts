@@ -88,7 +88,8 @@ export async function startRouteTracking(onPoint: PointHandler): Promise<{
           backgroundTitle: 'Kalastus käynnissä',
           requestPermissions: true,
           stale: false,
-          distanceFilter: 25,
+          // Tiheämpi näyte ≈ karttaplotteri (noin 8 m)
+          distanceFilter: 8,
         },
         (location, error) => {
           if (error) {
@@ -132,7 +133,7 @@ export async function startRouteTracking(onPoint: PointHandler): Promise<{
     () => {
       /* keep session even if one fix fails */
     },
-    { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 },
+    { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 },
   )
 
   return { ok: true, mode: 'web' }

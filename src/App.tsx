@@ -595,8 +595,8 @@ function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
         <h1>Kartta</h1>
       </div>
       <p className="muted" style={{ marginTop: 0 }}>
-        Kalastuskartta: SYKE:n syvyyskäyrät, saaliit kalasymboleina ja kalastuspäivien
-        reitit viivoina. Kerrokset vasemmasta yläkulmasta.
+        Kalastuskartta: SYKE:n syvyyskäyrät, saaliit kalasymboleina ja reitit
+        plotterityylillä. Kerrokset vasemmasta yläkulmasta.
       </p>
       <div className="map-panel map-panel-live">
         <CatchMap
@@ -605,11 +605,17 @@ function MapScreen({ speciesName }: { speciesName: (id: string) => string }) {
           center={store.lastFix}
           routes={[
             ...store.state.fishingDays
-              .filter((d) => d.mapVisible && (d.routePoints?.length ?? 0) > 1)
+              .filter(
+                (d) =>
+                  d.mapVisible &&
+                  ((d.routeTracks?.length ?? 0) > 0 ||
+                    (d.routePoints?.length ?? 0) > 1),
+              )
               .map((d) => ({
                 id: d.id,
                 label: `${d.title} · ${new Date(`${d.date}T12:00:00`).toLocaleDateString('fi-FI')}`,
                 points: d.routePoints ?? [],
+                tracks: d.routeTracks,
               })),
             ...(store.state.session.active && store.state.session.points.length > 1
               ? [

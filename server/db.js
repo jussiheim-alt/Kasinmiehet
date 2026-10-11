@@ -69,6 +69,11 @@ if (!fishingDayCols.includes('route_points_json')) {
     `ALTER TABLE fishing_days ADD COLUMN route_points_json TEXT NOT NULL DEFAULT '[]'`,
   )
 }
+if (!fishingDayCols.includes('route_tracks_json')) {
+  db.exec(
+    `ALTER TABLE fishing_days ADD COLUMN route_tracks_json TEXT NOT NULL DEFAULT '[]'`,
+  )
+}
 
 const seedUsers = [
   ['olli', 'Olli'],
