@@ -26,7 +26,23 @@ app.use(cors())
 app.use(express.json({ limit: '2mb' }))
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'kasinmiehet', revision: getRevision() })
+  const catchCount = db.prepare(`SELECT count(*) AS n FROM catches`).get().n
+  const dayCount = db.prepare(`SELECT count(*) AS n FROM fishing_days`).get().n
+  const dataDir = process.env.DATA_DIR || 'server/data'
+  const persistentHint =
+    dataDir.includes('/var/data') || dataDir.startsWith('/var/')
+  res.json({
+    ok: true,
+    service: 'kasinmiehet',
+    revision: getRevision(),
+    catches: catchCount,
+    fishingDays: dayCount,
+    dataDir,
+    persistentDisk: persistentHint,
+    warning: persistentHint
+      ? undefined
+      : 'SQLite ei ole pysyvällä levyllä — redeploy voi tyhjentää saaliit/reitit',
+  })
 })
 
 /** Jaettu tila kaikille käyttäjille (bootstrap + live-synk). */
@@ -224,16 +240,55 @@ app.post('/api/sessions/:id/stop', (req, res) => {
   res.json({ ok: true, revision, fishingDayId, routePoints: merged.length })
 })
 
-app.post('/api/fishing-days', (req, res) => {
-  const d = req.body || {}
-  if (!d.id || !d.date || !d.title) {
-    return res.status(400).json({ error: 'missing fields' })
-  }
-  const existing = db.prepare(`SELECT id FROM fishing_days WHERE id = ?`).get(d.id)
+function upsertFishingDay(d) {
+  if (!d?.id || !d?.date || !d?.title) return false
+  const existing = db
+    .prepare(
+      `SELECT id, route_points_json AS routePointsJson, route_tracks_json AS routeTracksJson,
+              map_visible AS mapVisible FROM fishing_days WHERE id = ?`,
+    )
+    .get(d.id)
+  const routePoints = Array.isArray(d.routePoints) ? d.routePoints : null
+  const routeTracks = Array.isArray(d.routeTracks) ? d.routeTracks : null
   if (existing) {
+    let nextPoints = existing.routePointsJson || '[]'
+    let nextTracks = existing.routeTracksJson || '[]'
+    try {
+      const oldPts = JSON.parse(nextPoints)
+      if (routePoints && routePoints.length >= (oldPts?.length || 0)) {
+        nextPoints = JSON.stringify(routePoints)
+      }
+    } catch {
+      if (routePoints) nextPoints = JSON.stringify(routePoints)
+    }
+    try {
+      const oldTracks = JSON.parse(nextTracks)
+      if (routeTracks && routeTracks.length >= (oldTracks?.length || 0)) {
+        nextTracks = JSON.stringify(routeTracks)
+      }
+    } catch {
+      if (routeTracks) nextTracks = JSON.stringify(routeTracks)
+    }
+    const mapVisible =
+      typeof d.mapVisible === 'boolean'
+        ? d.mapVisible
+          ? 1
+          : 0
+        : existing.mapVisible
     db.prepare(
-      `UPDATE fishing_days SET date = ?, title = ?, participants_json = ? WHERE id = ?`,
-    ).run(d.date, d.title, JSON.stringify(d.participants ?? []), d.id)
+      `UPDATE fishing_days
+       SET date = ?, title = ?, participants_json = ?,
+           map_visible = ?, route_points_json = ?, route_tracks_json = ?
+       WHERE id = ?`,
+    ).run(
+      d.date,
+      d.title,
+      JSON.stringify(d.participants ?? []),
+      mapVisible,
+      nextPoints,
+      nextTracks,
+      d.id,
+    )
   } else {
     db.prepare(
       `INSERT INTO fishing_days
@@ -245,12 +300,61 @@ app.post('/api/fishing-days', (req, res) => {
       d.title,
       JSON.stringify(d.participants ?? []),
       d.mapVisible ? 1 : 0,
-      JSON.stringify(d.routePoints ?? []),
-      JSON.stringify(d.routeTracks ?? []),
+      JSON.stringify(routePoints ?? []),
+      JSON.stringify(routeTracks ?? []),
     )
+  }
+  return true
+}
+
+function upsertCatch(c) {
+  if (!c?.id || !c?.userId || !c?.speciesId) return false
+  db.prepare(
+    `INSERT OR REPLACE INTO catches
+      (id, user_id, species_id, lat, lng, created_at, length_cm, note, weather_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    c.id,
+    c.userId,
+    c.speciesId,
+    c.lat,
+    c.lng,
+    c.createdAt,
+    c.lengthCm ?? null,
+    c.note ?? null,
+    JSON.stringify(c.weather ?? {}),
+  )
+  return true
+}
+
+app.post('/api/fishing-days', (req, res) => {
+  const d = req.body || {}
+  if (!upsertFishingDay(d)) {
+    return res.status(400).json({ error: 'missing fields' })
   }
   const revision = bumpRevision()
   res.json({ ok: true, revision })
+})
+
+/** Palauta saaliit + kalastuspäivät laitteen välimuistista (Render-wipe / synkkavirhe). */
+app.post('/api/restore', (req, res) => {
+  const catches = Array.isArray(req.body?.catches) ? req.body.catches : []
+  const fishingDays = Array.isArray(req.body?.fishingDays)
+    ? req.body.fishingDays
+    : []
+  let restoredCatches = 0
+  let restoredDays = 0
+  const tx = db.transaction(() => {
+    for (const c of catches) {
+      if (upsertCatch(c)) restoredCatches += 1
+    }
+    for (const d of fishingDays) {
+      if (upsertFishingDay(d)) restoredDays += 1
+    }
+  })
+  tx()
+  const revision = bumpRevision()
+  res.json({ ok: true, revision, restoredCatches, restoredDays })
 })
 
 /** Kalastuspäivä kartalla päälle / pois */

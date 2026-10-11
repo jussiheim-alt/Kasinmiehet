@@ -29,12 +29,12 @@ Yksi Web Service palvelee UI:n + API:n (`render.yaml`).
 
 1. Render Dashboard → **New** → **Blueprint** (tai Web Service) → tämä GitHub-repo  
 2. Branch: `main` (mergen jälkeen) tai `cursor/kalastussovellus-ui-de9c` testiin  
-3. Build: `npm install && npm run build` · Start: `npm start`  
-4. Lisää **Persistent Disk** polkuun `/var/data` (SQLite säilyy restartien yli; free-planilla disk voi vaatia maksullisen planin)
+3. Plan: **Starter** (tai korkeampi) + **Persistent Disk** mount `/var/data`, `DATA_DIR=/var/data`  
+4. Build: `npm install && npm run build` · Start: `npm start`
 
-Terveys: `https://<palvelu>.onrender.com/api/health`
+Terveys: `https://<palvelu>.onrender.com/api/health` — jos `persistentDisk: false` tai `warning` näkyy, saaliit voivat hävitä redeployssa.
 
-Ilman levyä data voi hävitä cold start / redeploy -tilanteessa — levy on suositeltu.
+**Free-planilla ei ole pysyvää levyä** → jokainen deploy tyhjentää SQLite:n. Sovellus yrittää palauttaa saaliit/reitit puhelimen localStoragesta (`/api/restore`), mutta levy kannattaa ottaa käyttöön.
 
 ## Android
 

@@ -15,6 +15,13 @@ import {
   startRouteTracking,
   stopRouteTracking,
 } from './lib/geo'
+import {
+  catchesMissingFromServer,
+  daysMissingOrRicher,
+  loadMergedLocalState,
+  mergeCatches,
+  mergeDays,
+} from './lib/localRecover'
 import { shareText } from './lib/share'
 import { isNearWater } from './lib/water'
 import { fetchWeather } from './lib/weather'
@@ -47,20 +54,7 @@ function emptyState(): AppState {
 }
 
 function loadState(): AppState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw) as AppState
-      parsed.catches = Array.isArray(parsed.catches) ? parsed.catches : []
-      parsed.fishingDays = Array.isArray(parsed.fishingDays)
-        ? parsed.fishingDays
-        : []
-      return parsed
-    }
-  } catch {
-    /* ignore */
-  }
-  return emptyState()
+  return loadMergedLocalState(emptyState())
 }
 
 interface SyncPayload {
@@ -117,8 +111,9 @@ function applySharedPayload(
 ): AppState {
   return {
     ...s,
-    catches: data.catches,
-    fishingDays: data.fishingDays,
+    // Yhdistä — älä koskaan heitä paikallisia saaliita/reittejä pois
+    catches: mergeCatches(s.catches, data.catches),
+    fishingDays: mergeDays(s.fishingDays, data.fishingDays),
     customSpecies: data.species.filter(
       (sp) => !SEED_SPECIES.some((seed) => seed.id === sp.id),
     ),
@@ -164,6 +159,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const userIdRef = useRef(state.currentUserId)
   const applyingRemoteRef = useRef(false)
   const wasActiveRef = useRef(false)
+  const restoreAttemptedRef = useRef(false)
+  const stateRef = useRef(state)
 
   useEffect(() => {
     trackingModeRef.current = trackingMode
@@ -172,6 +169,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     userIdRef.current = state.currentUserId
   }, [state.currentUserId])
+
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
@@ -290,11 +291,48 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!userId) return
       try {
         const since = force ? 0 : revisionRef.current
-        const data = await apiGet<SyncPayload>(
+        let data = await apiGet<SyncPayload>(
           `/api/sync?userId=${encodeURIComponent(userId)}&since=${since}`,
         )
         setApiOnline(true)
         if (data.unchanged) return
+
+        // Jos palvelin on tyhjempi (esim. Render wipe), palauta laitteen data
+        const local = stateRef.current
+        const missingCatches = catchesMissingFromServer(local.catches, data.catches)
+        const missingDays = daysMissingOrRicher(
+          local.fishingDays,
+          data.fishingDays,
+        )
+        if (
+          (missingCatches.length > 0 || missingDays.length > 0) &&
+          !restoreAttemptedRef.current
+        ) {
+          restoreAttemptedRef.current = true
+          try {
+            const restored = await apiSendJson<{
+              revision?: number
+              restoredCatches?: number
+              restoredDays?: number
+            }>('/api/restore', 'POST', {
+              catches: missingCatches,
+              fishingDays: missingDays,
+            })
+            if (
+              (restored.restoredCatches ?? 0) > 0 ||
+              (restored.restoredDays ?? 0) > 0
+            ) {
+              setSyncNotice(
+                `Palautettiin ${restored.restoredCatches ?? 0} saalista ja ${restored.restoredDays ?? 0} päivää`,
+              )
+              data = await apiGet<SyncPayload>(
+                `/api/sync?userId=${encodeURIComponent(userId)}&since=0`,
+              )
+            }
+          } catch {
+            /* jatka mergeen silti */
+          }
+        }
 
         revisionRef.current = data.revision || revisionRef.current
         const prevActive = wasActiveRef.current
@@ -512,7 +550,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setTrackingMode(null)
       sessionIdRef.current = null
       wasActiveRef.current = false
-      setState(emptyState())
+      // Älä tyhjennä saaliita/reittejä — vain käyttäjävaihto
+      setState((s) => ({
+        ...s,
+        currentUserId: null,
+        session: { active: false, startedAt: null, points: s.session.points },
+      }))
     },
     startSession: beginTracking,
     stopSession,
