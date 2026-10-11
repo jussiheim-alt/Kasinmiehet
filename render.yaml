@@ -1,0 +1,24 @@
+# Render Blueprint — Kasinmiehet (UI + API yhdessä palvelussa)
+# New → Blueprint → valitse tämä repo.
+#
+# TÄRKEÄÄ: SQLite tarvitsee Persistent Diskin, muuten saaliit/reitit
+# häviävät jokaisessa redeployssa. Free-planilla levyä ei ole —
+# käytä vähintään Starteria + alla olevaa disk-lohkoa.
+services:
+  - type: web
+    name: kasinmiehet
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: kasinmiehet-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATA_DIR
+        value: /var/data
